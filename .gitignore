@@ -13,3 +13,6 @@ downloads
 out
 
 self_install.sh
+build.sh
+deploy.sh
+dist
