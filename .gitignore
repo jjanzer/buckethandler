@@ -1,0 +1,15 @@
+__pycache__
+*.egg-info/
+*.egg
+*.EGG
+EGG-INFO/
+
+config.json
+config.*.json
+
+sample_tests
+uploads
+downloads
+out
+
+self_install.sh

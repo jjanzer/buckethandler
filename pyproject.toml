@@ -1,0 +1,10 @@
+[project]
+name = "buckethandler"
+version = "0.9.0"
+
+dependencies = [
+	"requests"
+]
+
+[project.scripts]
+bh = "buckethandler.cli:main"
