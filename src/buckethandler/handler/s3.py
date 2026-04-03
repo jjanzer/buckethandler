@@ -378,7 +378,7 @@ class S3Handler(BaseHandler):
 
 		return False
 
-	def _download_by_path(self, path_src:str, path_dst:str, with_txt = False, write_to_disk=True):
+	def _download_by_path(self, path_src:str, path_dst:Union[str,None]=None, with_txt = False, start=None, end=None, write_to_disk=True):
 		# this is a single file download, not to be confused with the "download" method which can download multiple files based on a prefix
 
 		params = {
@@ -387,7 +387,11 @@ class S3Handler(BaseHandler):
 		if not path_src.startswith('/'):
 			path_src = '/' + path_src
 
-		response = self._make_request(params=params,path=path_src,method=self.RequestMethod.GET)
+		headers = {}
+		if start != None and end != None:
+			headers['Range'] = f"bytes={start}-{end}"
+
+		response = self._make_request(params=params,path=path_src,method=self.RequestMethod.GET, headers=headers)
 		headers = response.headers
 
 		text = None
@@ -414,7 +418,7 @@ class S3Handler(BaseHandler):
 			'uploadTimestamp': mtime_ts,
 		}
 
-		if write_to_disk and response.status_code == 200:
+		if write_to_disk and path_dst is not None and len(path_dst) > 0 and response.status_code == 200:
 			self._write_file_to(path_dst, result)
 
 		return result

@@ -8,24 +8,24 @@ from typing import Union, List
 from .handler.b2 import BackblazeB2Handler
 from .handler.s3 import S3Handler
 
-class HandlerType(Enum):
+class BucketHandlerType(Enum):
 	B2 = 1
 	S3 = 2
 	UNKNOWN = 99
 
 class BucketHandler:
-	def __init__(self, config, handler_type:HandlerType=HandlerType.UNKNOWN, path:str = ''):
+	def __init__(self, config, handler_type:BucketHandlerType=BucketHandlerType.UNKNOWN, path:str = ''):
 		self.config = config
 		self.handler_type = handler_type
 		self.path = path
 
-		if handler_type == HandlerType.UNKNOWN and path is not None:
+		if handler_type == BucketHandlerType.UNKNOWN and path is not None:
 			self.handler_type = self._guess_protocol(path)
 
-		if self.handler_type == HandlerType.B2:
+		if self.handler_type == BucketHandlerType.B2:
 			from .handler.b2 import BackblazeB2Handler
 			self.handler = BackblazeB2Handler(config)
-		elif self.handler_type == HandlerType.S3:
+		elif self.handler_type == BucketHandlerType.S3:
 			from .handler.s3 import S3Handler
 			self.handler = S3Handler(config)
 		else:
@@ -42,11 +42,11 @@ class BucketHandler:
 			return None
 
 		if path.startswith("b2://"):
-			return HandlerType.B2
+			return BucketHandlerType.B2
 		elif path.startswith("s3://"):
-			return HandlerType.S3
+			return BucketHandlerType.S3
 		else:
-			return HandlerType.UNKNOWN
+			return BucketHandlerType.UNKNOWN
 
 	def __bool__(self):
 		return self.handler is not None
