@@ -4,19 +4,20 @@ Main BackBlaze b2 handler, you don't directly interface with this, see bh.py for
 
 import os
 import glob
+import io
 import requests
+try:
+	import httpx
+except ImportError:
+	httpx = None
 import base64
 import mimetypes
-import urllib.parse
-import math
 import time
-import shutil
 import re
-import math
 import traceback
-import threading
-import json
 from typing import Union, List
+
+from .base import BaseHandler
 
 from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor,wait,as_completed,Future
 
@@ -24,56 +25,8 @@ from enum import Enum
 
 #stop_event = threading.Event()
 
-'''
-This does nothing useful in uploads...
-'''
-'''
-from http.client import HTTPConnection
 
-HTTPConnection.__init__.__defaults__ = tuple(
-	x if x != 8192 else 64 * 1024
-	for x in HTTPConnection.__init__.__defaults__
-)
-'''
-
-def pretty_file_size(bytes):
-	'''
-	Converts a number like 10 * 1024 * 1024 to 10MB
-	'''
-	if bytes is None:
-		return "0B"
-	for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-		if bytes < 1024:
-			return f"{bytes:.2f}{unit}"
-		bytes /= 1024
-	return f"{bytes:.2f}PB"
-
-def from_pretty_file_size(raw_str):
-	'''
-	Converts something like 10MB to 10*1024*1024 or 5*1024 to 5KB or 46 to 46B
-	'''
-	raw_str = raw_str.strip().upper()
-	match = re.match(r'([0-9\.]+)([KMGTP]?B)', raw_str)
-	if not match:
-		raise ValueError(f"Invalid file size format: {raw_str}")
-
-	size = float(match.group(1))
-	unit = match.group(2)
-
-	if unit == 'KB':
-		bytes = size * 1024
-	elif unit == 'MB':
-		bytes = size * 1024 * 1024
-	elif unit == 'GB':
-		bytes = size * 1024 * 1024 * 1024
-	elif unit == 'TB':
-		bytes = size * 1024 * 1024 * 1024 * 1024
-	else:
-		bytes = size
-
-	return math.ceil(bytes)
-
-class BackblazeB2Handler:
+class BackblazeB2Handler(BaseHandler):
 
 	class RequestMethod(Enum):
 		GET = 1
@@ -83,71 +36,21 @@ class BackblazeB2Handler:
 
 	def __init__(self, config):
 
-		# if they passed in a string, assume it's a file path to a config that is a json
-		if type(config) == str:
-			config = self._load_config_file(config)
-
-		self.config = config
+		super().__init__(config)
 		self.base_url = "https://api.backblazeb2.com/b2api/v4"
 		self.download_url = None
 		self.token = None
 		self.accountId = None
-		self.thread_local = threading.local()
 
-		# How many bytes we can stuff per upload_part
-		self.max_bytes_per_chunk = 100 * 1024 * 1024  # 100 MB
 		# B2 only supports files up to 5GB and then they need to use a separate API for uploading
 		self.large_file_upload_limit = 1024 * 1024 * 1024 # 1GB limit
-		# how many times do we allow a retry?
-		self.max_retries = 5
-		# set to a path if you want to use a failsafe copy for when upload fails
-		self.failsafe_copy = None # example: "./staging_upload/"
 
-		# when uploading a large file how many threads should we use per file
-		self.max_upload_single_threads = 4
-
-		# how many threads will be used if we're uploading many files (not single file uploads)
-		self.max_upload_threads = 4
-
-		# how many threads will be used if we're downloading many download files (not single file downloads)
-		self.max_download_threads = 8
-
-		# if set it will attempt to set the modified time to remote file's time
-		self.download_sync_mtime = True
 
 
 	def _strip_protocol_from_path(self,path:str) -> str:
 		if path[:5].lower().startswith('b2://'):
 			return path[5:]
 		return path
-
-	def _remove_prefix(self, text:str, prefix:str) -> str:
-		# python 3.9 has "removeprefix" but we might not be on that version
-		if text.startswith(prefix):
-			return text[len(prefix):]
-		return text
-
-	def _load_config_file(self, path='config.json'):
-		'''
-		Load the configuration from a file.
-
-		Args:
-			path (str): The path to the configuration file.
-
-		Returns:
-			dict: The loaded configuration.
-		'''
-		with open(path, 'r') as file:
-			return json.load(file)
-
-	def set_max_download_threads(self,max_threads):
-		self.max_download_threads = max_threads
-
-	def set_max_upload_threads(self,max_threads):
-		self.max_upload_threads = max_threads
-
-	def set_max_upload_single_threads(self,max_threads):
-		self.max_upload_single_threads = max_threads
 
 	def _encode_credentials(self,account_key, application_key):
 		credentials = f"{account_key}:{application_key}"
@@ -181,13 +84,6 @@ class BackblazeB2Handler:
 			return self._authenticate()
 		return None
 
-	def _quote(self,path):
-		'''
-		Handles percent encoding for paths as B2 requires this
-		'''
-		# Note we DO allow "/" symbol
-		return urllib.parse.quote(path)
-
 	def _make_request(self,url,headers=None,data=None,json=None,method=RequestMethod.GET,authenticate=False):
 		'''
 		Attempts to make a network request, if max_retries > 0 will reattempt on non 200, 206, 400 response
@@ -195,6 +91,15 @@ class BackblazeB2Handler:
 
 		response = None
 		response_status_code = None
+
+		# Used to optimize the send chunk size
+		send_buffer_size = self.ideal_send_size
+		class FastBytesIO(io.BytesIO):
+			def read(self, n=-1):
+				# Force X writes
+				if n < 0 or n > send_buffer_size:
+						n = send_buffer_size
+				return super().read(n)
 
 		if authenticate:
 			self._auto_authenticate()
@@ -206,7 +111,15 @@ class BackblazeB2Handler:
 			if method == self.RequestMethod.GET:
 				response = requests.get(url, headers=headers)
 			elif method == self.RequestMethod.POST:
-				response = requests.post(url, headers=headers,data=data,json=json)
+				#response = requests.post(url, headers=headers,data=data,json=json)
+				if httpx:
+					buf = FastBytesIO(data) if isinstance(data, bytes) else data
+					timeout = httpx.Timeout(60.0, connect=60.0, read=60.0, write=60.0)
+					client = httpx.Client(timeout=timeout)
+					response = client.post(url, headers=headers,content=buf,json=json)
+					#response = client.put(url, headers=headers_combined,content=data,json=json)
+				else:
+					response = requests.post(url, headers=headers,data=data,json=json)
 			elif method == self.RequestMethod.PUT:
 				response = requests.put(url, headers=headers,data=data,json=json)
 			elif method == self.RequestMethod.DELETE:
@@ -263,7 +176,7 @@ class BackblazeB2Handler:
 		else:
 			raise Exception("Failed to get upload key: " + response.text)
 
-	def _finish_large_file(self, file_id, shas):
+	def _finish_large_file(self, path_dst, file_id, shas):
 		url = f"{self.base_url}/b2_finish_large_file"
 		data = {
 			'fileId': file_id,
@@ -400,14 +313,6 @@ class BackblazeB2Handler:
 			raise Exception("Failed to start large file upload: " + response.text)
 
 
-	def _get_chunk_count_for_file(self,path):
-		'''
-		How many chunks will we need to split a file, eg:
-		file is 105 bytes and max_bytes_per_chunk is 20
-		we will need 105/20 = 6
-		'''
-		file_size = os.path.getsize(path)
-		return math.ceil(file_size / self.max_bytes_per_chunk)
 
 	def _upload_chunk(self,chunk,chunks,path_src,url,upload_part_data):
 		buffer_len = 1024 * 1024 * 100 # 10mB
@@ -480,40 +385,25 @@ class BackblazeB2Handler:
 
 		shas = []
 		results = []
+		upload_part_datas = []
+
+		# Get a list of where all chunks should be uploaded to with their auth
+		with ThreadPoolExecutor(max_workers=self.max_upload_single_threads) as executor:
+			futures = []
+			for chunk in range(chunks):
+				futures.append(executor.submit(self._get_upload_part_key,file_id))
+			for future in as_completed(futures):
+				upload_part_data = future.result()
+				upload_part_datas.append(upload_part_data)
 
 		# Now we know how many iterations we need to take
 		with ThreadPoolExecutor(max_workers=self.max_upload_single_threads) as executor:
 			futures = []
 			for chunk in range(chunks):
-				'''
-				content = None
-				with open(path, 'rb', buffering=buffer_len) as file:
-					file.seek(chunk * self.max_bytes_per_chunk)
-					content = file.read(self.max_bytes_per_chunk)
-
-				part_sha = self.CalculateSha1(content)
-				shas.append(part_sha)
-
-				print(f"Uploading chunk {chunk+1}/{chunks} size: {len(content)} bytes sha1: {part_sha}")
-
-				headers = {
-					'Authorization': upload_part_data['authorizationToken'],
-					#'Content-Type': 'application/octet-stream',
-					'Content-Length': str(len(content)),
-					#'X-Bz-File-Id': file_id,
-					'X-Bz-Part-Number': str(chunk + 1),
-					'X-Bz-Content-Sha1': part_sha,
-				}
-				response = self.MakeRequest(url, headers=headers, data=content, method=self.RequestMethod.POST, authenticate=False)
-				if response.status_code == 200:
-					results.append(response.json())
-				else:
-					raise Exception("Failed to upload file: " + response.text)
-				'''
-				upload_part_data = self._get_upload_part_key(file_id)
+				#upload_part_data = self._get_upload_part_key(file_id)
+				upload_part_data = upload_part_datas[chunk]
 				url = upload_part_data['uploadUrl']
 				futures.append(executor.submit(self._upload_chunk,chunk,chunks,path_src,url,upload_part_data))
-			#wait(futures)
 
 			results = [None] * chunks
 			shas = [None] * chunks
@@ -528,137 +418,14 @@ class BackblazeB2Handler:
 
 		# Now that we're done we need to trip the finish call
 		print(f"Tripping finish for file: {file_id} with {shas}")
-		self._finish_large_file(file_id, shas)
+		self._finish_large_file(path_dst, file_id, shas)
 
 		# If we got here we're done
 
 	def upload(self, path_root: Union[str, List[str]], destination_root:str):
-		'''
-		Uploads a file or folder to the bucket
-
-		Args:
-			path_root (str or List[str]): The local file or folder to upload
-			destination_root (str): The root folder in the bucket to upload to
-
-		Returns:
-			bool: True if the upload was successful, False otherwise.
-
-		Remarks:
-			Let's say we have a folder called "logs" and inside it we have "2026/log1.txt" and "2026/log2.txt"
-
-			if path_root = "./logs" or "./logs/" and destination_root = "backups"
-				We will create the files:
-					backups/logs/2026/log1.txt
-					backups/logs/2026/log2.txt
-			if path_root = "./logs/2026" and destination_root = "backups"
-				We will create the files:
-					backups/2026/log1.txt
-					backups/2026/log2.txt
-			if path_root = "./logs/2026/log1.txt" and destination_root = "backups"
-				We will create the files:
-					backups/log1.txt
-
-			Notice that if path_root is a directory we will include that directory name in the upload path
-
-
-		'''
 		self._auto_authenticate()
+		return super().upload(path_root, destination_root)
 
-		# if something like b2://foo/bar is passed in we want to just get "foo/bar"
-		destination_root = self._strip_protocol_from_path(destination_root)
-		destination_root = destination_root.rstrip('/').replace('\\', '/')
-
-		# we support both str and list of strings, convert these to list of strings
-		path_roots = []
-		if isinstance(path_root, str):
-			path_roots = [path_root]
-		else:
-			path_roots = path_root
-
-		# convert all the paths into tuples of (path_src,path_dst)
-
-		uploads = []
-
-		result = []
-
-		for path_root in path_roots:
-			# Find all the files
-			recursive = False
-			path_root_original = path_root
-			path_root_original_abs = os.path.abspath(path_root_original)
-			last_original_dir = ""
-			paths =  []
-
-			if os.path.isdir(path_root):
-
-				# convert this to a recursive lookup
-				recursive = True
-				last_original_dir = os.path.basename(path_root_original_abs)
-
-				# If it's a directory, we need to find all files in it
-				path_root = os.path.join(path_root, '**', '*')
-				paths = glob.glob(path_root, recursive=True)
-			else:
-				# If it's a file, we just use it directly
-				paths = [path_root]
-
-			path_root_abs = os.path.abspath(path_root_original)
-
-			for path in paths:
-				if os.path.isdir(path):
-					continue
-				#print(f"{path} => {destination_root}/{path}")
-
-				path_abs = os.path.abspath(path)
-
-				path_src = path
-				path_dst = ""
-
-				# if our og path is a directory include that directory in the upload path
-				if recursive == True:
-					path_dst = destination_root + '/' + last_original_dir + '/' + self._remove_prefix(path_abs, path_root_abs).replace('\\', '/').lstrip('/')
-				else:
-					if path_root_abs == path_root_original_abs:
-						path_dst = destination_root + '/' + os.path.basename(path)
-					else:
-						path_dst = destination_root + '/' + self._remove_prefix(path_abs, path_root_abs).replace('\\', '/').lstrip('/')
-
-				uploads.append((path_src,path_dst))
-
-
-		with ThreadPoolExecutor(max_workers=self.max_upload_threads) as executor:
-			futures = []
-
-			for path_src, path_dst in uploads:
-
-				# if a single file is larger than our limit we have to use the large file upload instead
-				future:Future
-				if os.path.getsize(path_src) > self.large_file_upload_limit:
-					# Use the large file upload API
-					#file = self._upload_large_file(path_src, path_dst)
-					future = executor.submit(self._upload_large_file, path_src, path_dst)
-				else:
-					#file = self._upload_file(path_src, path_dst, upload_key=upload_key)
-					future = executor.submit(self._upload_file, path_src, path_dst)
-
-				futures.append((future,(path_src,path_dst)))
-			for future, args in futures:
-				try:
-					file = future.result()
-					result.append(file)
-				except Exception as e:
-					path_src, path_dst = args
-					print(f"Error uploading {path_src}: {e}")
-					if self.failsafe_copy:
-						print(f"Using failsafe copy for {path_src} => {self.failsafe_copy}")
-						try:
-							shutil.copy2(path_src,self.failsafe_copy)
-						except Exception as e:
-							print(f"Error copying {path_src} to {self.failsafe_copy}: {e}")
-							return False
-					else:
-						return False
-		return result
 
 	def _write_file_to(self, destination_root, result, file_path=None):
 		'''
@@ -838,93 +605,9 @@ class BackblazeB2Handler:
 
 
 	def download(self, prefix: Union[str, List[str]], destination_root=None, include=None, min_size=None, max_size=None, recurse=True, preserve_dir_prefix=False):
-		'''
-		Downloads files matching the prefix, if prefix is a directory it will download all files in that directory, if it's a file it will just download that file
-
-		Args:
-			prefix (str or List[str]): The prefix or list of prefixes to search for.
-			include (str or List[str]): If set, only files that include this string will be downloaded.
-			min_size (int): If set, only files larger than this size (in bytes) will be downloaded.
-			max_size (int): If set, only files smaller than this size (in bytes) will be downloaded.
-			recurse (bool): If true, will search for files in subdirectories as well.
-			destination_root (str): The local directory to download the files to. If not set, files will be downloaded to the current directory.
-			preserve_dir_prefix (bool): If true, will preserve the relative path after the 'prefix' for the local files:
-				eg:
-					preserve_dir_prefix = True, prefix = "2026/logs/123.txt", destination_root="./downloads" will create "./downloads/2026/logs/123.txt"
-					preserve_dir_prefix = True, prefix = "2026/logs", destination_root="./downloads" will create "./downloads/2026/logs/123.txt"
-					preserve_dir_prefix = True, prefix = "2026", destination_root="./downloads" will create "./downloads/2026/logs/123.txt"
-					preserve_dir_prefix = False, prefix = "2026/logs/123.txt", destination_root="./downloads" will create "./downloads/123.txt"
-					preserve_dir_prefix = False, prefix = "2026/logs", destination_root="./downloads" will create "./downloads/logs/123.txt"
-					preserve_dir_prefix = False, prefix = "2026", destination_root="./downloads" will create "./downloads/2026/logs/123.txt"
-
-		Returns:
-			list: A list of local file paths that were downloaded.
-		'''
 		self._auto_authenticate()
 
-		destination_root = destination_root.rstrip('/').replace('\\', '/') if destination_root else destination_root
-
-		result = []
-
-		prefixes = []
-		if isinstance(prefix, str):
-			prefixes = [prefix]
-		elif isinstance(prefix, list):
-			prefixes = prefix
-
-		global_add_back_last_prefix_folder = True
-		#if destination_root != None and not os.path.isdir(destination_root):
-			# if the output folder doesn't exist, treat it like cp in the sense that we will not nest a new folder inside of it
-			#global_add_back_last_prefix_folder = False
-
-		files = {"files": []}
-
-		for prefix in prefixes:
-
-			prefix = self._strip_protocol_from_path(prefix)
-
-			add_back_last_prefix_folder = global_add_back_last_prefix_folder
-
-			if prefix.endswith('*'):
-				# if the prefix ends with a * we want to search for the prefix without the *
-				prefix = prefix[:-1]
-				# treat it like cp in the sense that we would glob and not create the last folder of the prefix
-				add_back_last_prefix_folder = False
-
-			'''
-			This works for both a file or directory
-			'''
-			include_dirs = True
-			include_files = True
-			tmp_files = self.search(prefix=prefix, include=include, min_size=min_size, max_size=max_size,include_dirs=include_dirs, include_files=include_files, recurse=recurse)
-
-			for idx,file in enumerate(tmp_files['files']):
-				path_dst = None
-				if preserve_dir_prefix:
-					# we want to preserve the relative path after the prefix, so we need to calculate that and store it for later when we do the download
-					path_dst = destination_root + '/' + file['fileName']
-				else:
-					# if we have something like prefix = "2026" and the file is "2026/logs/123.txt" we want destination_root + "/2026/logs/123.txt" since "logs" is a dir
-					if file['fileName'] == prefix:
-						# we've requested the exact file
-						path_dst = destination_root + '/' + os.path.basename(file['fileName'])
-					else:
-						relative_path = file['fileName'][len(prefix):].lstrip('/')
-						# now we'll have something like logs/123.txt
-
-						# add back the "last" folder of the prefix
-						last_prefix_folder = os.path.basename(prefix.rstrip('/'))
-						if add_back_last_prefix_folder and last_prefix_folder != '' and relative_path != '':
-							relative_path = last_prefix_folder + '/' + relative_path
-
-						path_dst = destination_root + '/' + relative_path
-
-				#print(f"download: {file['fileName']} => {path_dst}")
-
-
-				tmp_files['files'][idx]['path_dst'] = path_dst
-
-			files['files'].extend(tmp_files['files'])
+		files = self._download_paths(prefix=prefix,destination_root=destination_root, include=include, min_size=min_size, max_size=max_size, recurse=recurse, preserve_dir_prefix=preserve_dir_prefix)
 
 		jobs_total = len(files['files'])
 		jobs_completed = 0
@@ -955,10 +638,6 @@ class BackblazeB2Handler:
 
 				futures.append(future)
 
-
-				#fetched = self.DownloadByKey(file['fileId'],destination_root=destination_root)
-				#print(f"Downloaded file: {fetched['fileName']}, Content Type: {fetched['contentType']}, Size: {fetched['contentLength']} bytes")
-				#print(f"{destination_root}{fetched['fileName']}")
 			try:
 				for future in as_completed(futures):
 					jobs_completed += 1
@@ -1016,16 +695,16 @@ class BackblazeB2Handler:
 			'''
 			Records look like:
 			{
-				'accountId': 'b65cdab40c0e',
+				'accountId': 'b99cace40e9e',
 				'action': 'upload',
-				'bucketId': 'db86658c7dba8ba4908c001e',
+				'bucketId': 'db8665777cab9ba4102d001e',
 				'contentLength': 1590771,
 				'contentMd5': '3c31591b1105a955fc4fc8156b4a541e',
 				'contentSha1': 'f45fd9f6aa60def60bf2facef3685ff7c8ad18fe',
 				'contentType': 'application/x-zip-compressed',
-				'fileId': '4_zdb86658c7dba8ba4908c001e_f1153a53c31fdc903_d20250828_m185809_c002_v0203007_t0055_u01756407489603',
+				'fileId': '4_zdb86658c7dbadcea108c001e_f1153a53c31fdc903_d20250177_m185909_d002_v0203009_t0066_u01956407489613',
 				'fileInfo': {},
-				'fileName': 'PRERUN2_DONE/fig_base_real_m_historical_tightfull_032329.zip',
+				'fileName': 'foo/bar/0512421.zip',
 				'fileRetention': {'isClientAuthorizedToRead': False, 'value': None},
 				'legalHold': {'isClientAuthorizedToRead': False, 'value': None},
 				'serverSideEncryption': {'algorithm': None, 'mode': None},
@@ -1099,10 +778,6 @@ class BackblazeB2Handler:
 		else:
 			raise Exception("Failed to list buckets: " + response.text)
 		return None
-
-	def set_failsafe_copy(self,path):
-		# set to a path if you want to use a failsafe copy for when upload fails
-		self.failsafe_copy = path
 
 	def get_download_url(self,path:Union[str,List[str]],expiration_seconds=60*60):
 		'''

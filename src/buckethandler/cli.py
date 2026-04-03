@@ -16,102 +16,15 @@ from ast import arg
 import os
 import sys
 import getopt
-import datetime
 import re
-import time
 import json
 import argparse
 import textwrap
 
-import buckethandler.b2 as b2
+from .buckethandler import BucketHandler, pretty_file_size, from_pretty_file_size, pretty_print_files
 
-def _guess_protocol(path):
-	if path is None:
-		return None
 
-	if isinstance(path, list):
-		for p in path:
-			# use the first one, yes this will break if you have something like b2://... and then s3://...
-			return _guess_protocol(p)
-		return None
 
-	if path.startswith("b2://"):
-		return 'b2'
-	elif path.startswith("s3://"):
-		return 's3'
-	else:
-		return None
-
-def pretty_print_files(files):
-	minTime = 0
-	maxTime = 0
-
-	max_filename_str_len = 0
-	max_filesize_str_len = 0
-	max_content_type_str_len = 0
-	last_line = ''
-
-	for file in files.get('files', []):
-		max_filename_str_len = max(max_filename_str_len, len(file['fileName']))
-		max_filesize_str_len = max(max_filesize_str_len, len(b2.pretty_file_size(file['contentLength'])))
-		content_type_str = ""
-		if file['action'] == 'upload':
-			content_type_str = file['contentType'].ljust(max_content_type_str_len)
-		elif file['action'] == 'folder':
-			content_type_str = ""
-		elif file['action'] == 'hide':
-			content_type_str = ""
-		elif file['action'] == 'list':
-			content_type_str = ""
-
-		max_content_type_str_len = max(max_content_type_str_len, len(content_type_str))
-
-	for file in files.get('files', []):
-		upload_timestamp = file['uploadTimestamp']
-		if upload_timestamp > 0 and (minTime == 0 or upload_timestamp < minTime):
-			minTime = upload_timestamp
-		maxTime = max(maxTime, upload_timestamp)
-
-		pretty_file_size = b2.pretty_file_size(file['contentLength'])
-
-		file_name_str = file['fileName'].ljust(max_filename_str_len)
-		content_type_str = ""
-
-		time_str = ""
-
-		# there are 4 actions: start, upload, hide, folder, see: https://www.backblaze.com/apidocs/b2-list-file-names
-		if file['action'] == 'upload':
-			content_type_str = file['contentType'].ljust(max_content_type_str_len)
-			time_str = datetime.datetime.fromtimestamp(upload_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
-		elif file['action'] == 'folder':
-			content_type_str = "".ljust(max_content_type_str_len)
-			pretty_file_size = ""
-		elif file['action'] == 'hide':
-			content_type_str = "".ljust(max_content_type_str_len)
-			pretty_file_size = ""
-		elif file['action'] == 'list':
-			content_type_str = "".ljust(max_content_type_str_len)
-			pretty_file_size = ""
-
-		file_size_str = pretty_file_size.ljust(max_filesize_str_len)
-		line = f"{file_name_str}\t{content_type_str}\t{file_size_str}\t{time_str}"
-		last_line = line
-		print(line)
-
-	min_time_str = datetime.datetime.fromtimestamp(minTime / 1000).strftime('%Y-%m-%d %H:%M:%S')
-	max_time_str = datetime.datetime.fromtimestamp(maxTime / 1000).strftime('%Y-%m-%d %H:%M:%S')
-
-	min_max_time_delta_ms = maxTime - minTime
-	min_max_time_delta = min_max_time_delta_ms / 1000
-	# convert the seconds to a time range like 01:23:45 for 1 day 23 hours 45 seconds
-	days = int(min_max_time_delta // 86400)
-	hours = int((min_max_time_delta % 86400) // 3600)
-	minutes = int((min_max_time_delta % 3600) // 60)
-	seconds = int(min_max_time_delta % 60)
-
-	line_sep = "=" * len(last_line.expandtabs())
-	print(line_sep)
-	print(f"Files: {len(files.get('files', []))}, minTime: {min_time_str} maxTime: {max_time_str} time delta: {days}:{hours:02d}:{minutes:02d}:{seconds:02d}")
 
 def main():
 
@@ -158,19 +71,35 @@ def main():
 
 	args = parser.parse_args()
 
+	bh_src = None
+	bh_dst = None
+
 	protocol_src = None
 	protocol_dst = None
 
 	if 'src' in args:
-		protocol_src = _guess_protocol(args.src)
+		try:
+			bh_src = BucketHandler(args.config, path=args.src)
+			protocol_src = bh_src.handler_type
+		except Exception as e:
+			#print(f"Error initializing source handler: {e}")
+			#sys.exit(1)
+			pass
 	if 'dst' in args:
-		protocol_dst = _guess_protocol(args.dst)
+		try:
+			bh_dst = BucketHandler(args.config, path=args.dst)
+			protocol_dst = bh_dst.handler_type
+		except Exception as e:
+			#print(f"Error initializing destination handler: {e}")
+			#sys.exit(1)
+			pass
 
 	include_dirs = not args.nodirs
 	include_files = not args.nofiles
 	recurse = not args.norecurse
 
 	if args.cmd == 'ls':
+		'''
 		# make sure src is provided and is a remote path
 		if args.src is None:
 			print("Please provide a remote path to list, such as b2://bucket/prefix/")
@@ -179,10 +108,20 @@ def main():
 			print("Please provide a remote path to list, such as b2://bucket/prefix/")
 			sys.exit(1)
 
-		handler = b2.BackblazeB2Handler(args.config)
+		handler = None
+		if protocol_src == 'b2':
+			handler = b2.BackblazeB2Handler(args.config)
+		elif protocol_src == 's3':
+			handler = s3.S3Handler(args.config)
+		else:
+			print("Unsupported protocol, only b2:// and s3:// are supported")
+			sys.exit(1)
+		'''
 
-		files = handler.search(prefix=args.src, include=args.include, min_size=args.minsize, max_size=args.maxsize, include_dirs=include_dirs, include_files=include_files, recurse=recurse)
-		pretty_print_files(files)
+		if bh_src is not None:
+			files = bh_src.search(prefix=args.src, include=args.include, min_size=args.minsize, max_size=args.maxsize, include_dirs=include_dirs, include_files=include_files, recurse=recurse)
+			if files != None and 'files' in files:
+				pretty_print_files(files)
 
 
 	elif args.cmd == 'cp':
@@ -197,7 +136,16 @@ def main():
 			print("Please provide one local path and one remote path for copy, such as bh.py cp /local/path/file.txt b2://bucket/path/file.txt for upload or bh.py cp b2://bucket/path/file.txt /local/path/file.txt for download")
 			sys.exit(1)
 
-		handler = b2.BackblazeB2Handler(args.config)
+		handler = None
+		if bh_src is not None:
+			handler = bh_src
+		elif bh_dst is not None:
+			handler = bh_dst
+
+		if handler is None:
+			print("Error initializing handler for copy command")
+			sys.exit(1)
+
 
 		# which direction are we going?
 		if protocol_src is None and protocol_dst is not None:
@@ -231,11 +179,9 @@ def main():
 			print("Please provide a remote path to delete, such as b2://bucket/path/file.txt")
 			sys.exit(1)
 
-		handler = b2.BackblazeB2Handler(args.config)
-
 		if args.recursive:
 			for src in args.src:
-				src = handler._strip_protocol_from_path(src)
+				src = bh_src._strip_protocol_from_path(src)
 				if len(src) == 0 or src == '/':
 					# sanity check, they're asking to purge all files in their bucket
 					print(f"You are requesting to delete the entire source bucket, type YES to confirm")
@@ -244,7 +190,7 @@ def main():
 						print("Aborting delete")
 						sys.exit(1)
 
-		result = handler.delete(args.src,args.recursive, all_versions=not args.latestonly)
+		result = bh_src.delete(args.src,args.recursive, all_versions=not args.latestonly)
 		print(f"Deleted {result} files")
 
 
@@ -257,188 +203,16 @@ def main():
 			print("Please provide a remote path to generate a pre-signed URL for, such as b2://bucket/path/file.txt")
 			sys.exit(1)
 
-		handler = b2.BackblazeB2Handler(args.config)
+		handler = bh_src
 		urls = handler.get_download_url(args.src)
 		for url in urls:
 			print(url)
 
 	elif args.cmd == 'ls-buckets':
-		handler = b2.BackblazeB2Handler(args.config)
+		handler = bh_src
 		buckets = handler.list_buckets()
 		for bucket in buckets.get('buckets', []):
 			print(bucket['bucketName'])
-
-
-
-
-	'''
-
-
-	opts, args = getopt.getopt(sys.argv[1:], "h c l u d r rp", ["help","config=", "list=","upload=", "download=", "remove=", "path=", "failsafe=", "maxsize=", "minsize=", "filter=", "threads=", "norecurse", "nodirs", "nofiles"])
-
-	configuration = None
-	handler = None
-	destination_path = None
-	min_size = None
-	max_size = None
-	filter = None
-	recurse = True
-	include_dirs = True
-	include_files = True
-	threads = None
-
-	# handle defaults like configurations first, then handle params
-	for opt, arg in opts:
-		if opt in ("-p", "--path"):
-			destination_path = arg
-			#print(f"Remote path set to: {destination_path}")
-		if opt in ("--maxsize"):
-			max_size = b2.FromPrettyFileSize(arg)
-		if opt in ("--minsize"):
-			min_size = b2.FromPrettyFileSize(arg)
-		if opt in ("--filter"):
-			filter = arg
-		if opt in ("--nodirs"):
-			include_dirs = False
-		if opt in ("--nofiles"):
-			include_files = False
-		if opt in ("--norecurse"):
-			recurse = False
-		if opt in ("--threads"):
-			threads = int(arg)
-
-	if configuration is None:
-		configuration = 'config.json'
-
-	handler = b2.BackblazeB2Handler(configuration)
-
-
-	for opt, arg in opts:
-		if opt in ("-f", "--failsafe"):
-			handler.SetFailsafeCopy(arg)
-			print(f"Set failsafe copy path to: {arg}")
-
-	for opt, arg in opts:
-		if opt in ("-c", "--config"):
-			# already handled above, so we can skip this
-			pass
-		if opt in ("-h", "--help"):
-			usage()
-			sys.exit(0)
-		elif opt in ("-l", "--list"):
-			buckets = handler.ListBuckets()
-			files = handler.List(prefix=arg, filter=filter, min_size=min_size, max_size=max_size, include_dirs=include_dirs, include_files=include_files, recurse=recurse)
-			minTime = 0
-			maxTime = 0
-
-			max_filename_str_len = 0
-			max_filesize_str_len = 0
-			max_content_type_str_len = 0
-
-			for file in files.get('files', []):
-				max_filename_str_len = max(max_filename_str_len, len(file['fileName']))
-				max_filesize_str_len = max(max_filesize_str_len, len(b2.PrettyFileSize(file['contentLength'])))
-				content_type_str = ""
-				if file['action'] == 'upload':
-					content_type_str = file['contentType'].ljust(max_content_type_str_len)
-				elif file['action'] == 'folder':
-					content_type_str = ""
-				elif file['action'] == 'hide':
-					content_type_str = ""
-				elif file['action'] == 'list':
-					content_type_str = ""
-
-				max_content_type_str_len = max(max_content_type_str_len, len(content_type_str))
-
-			for file in files.get('files', []):
-				upload_timestamp = file['uploadTimestamp']
-				if upload_timestamp > 0 and (minTime == 0 or upload_timestamp < minTime):
-					minTime = upload_timestamp
-				maxTime = max(maxTime, upload_timestamp)
-
-				pretty_file_size = b2.PrettyFileSize(file['contentLength'])
-
-				file_name_str = file['fileName'].ljust(max_filename_str_len)
-				content_type_str = ""
-
-				time_str = ""
-
-				# there are 4 actions: start, upload, hide, folder, see: https://www.backblaze.com/apidocs/b2-list-file-names
-				if file['action'] == 'upload':
-					content_type_str = file['contentType'].ljust(max_content_type_str_len)
-					time_str = datetime.datetime.fromtimestamp(upload_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
-				elif file['action'] == 'folder':
-					content_type_str = "".ljust(max_content_type_str_len)
-					pretty_file_size = ""
-				elif file['action'] == 'hide':
-					content_type_str = "".ljust(max_content_type_str_len)
-					pretty_file_size = ""
-				elif file['action'] == 'list':
-					content_type_str = "".ljust(max_content_type_str_len)
-					pretty_file_size = ""
-
-				file_size_str = pretty_file_size.ljust(max_filesize_str_len)
-
-				print(f"{file_name_str}\t{content_type_str}\t{file_size_str}\t{time_str}")
-
-			min_time_str = datetime.datetime.fromtimestamp(minTime / 1000).strftime('%Y-%m-%d %H:%M:%S')
-			max_time_str = datetime.datetime.fromtimestamp(maxTime / 1000).strftime('%Y-%m-%d %H:%M:%S')
-
-			min_max_time_delta_ms = maxTime - minTime
-			min_max_time_delta = min_max_time_delta_ms / 1000
-			# convert the seconds to a time range like 01:23:45 for 1 day 23 hours 45 seconds
-			days = int(min_max_time_delta // 86400)
-			hours = int((min_max_time_delta % 86400) // 3600)
-			minutes = int((min_max_time_delta % 3600) // 60)
-			seconds = int(min_max_time_delta % 60)
-
-			print(f"Total files: {len(files.get('files', []))} examined, minTime: {min_time_str} maxTime: {max_time_str} time delta: {days}:{hours:02d}:{minutes:02d}:{seconds:02d}")
-
-		elif opt in ("-u", "--upload"):
-			if not arg:
-				print("Please provide a key to upload.")
-				usage()
-				sys.exit(1)
-			else:
-				print(f"Uploading file with key: {arg}")
-				# Here you would implement the upload logic
-				if destination_path is None:
-					destination_path = '/uploads/'
-				if threads != None:
-					handler.SetMaxUploadSingleThreads(threads)
-				result = handler.Upload(arg, destination_root=destination_path)
-				if result != True:
-					print(f"Upload failed")
-					sys.exit(1)
-		elif opt in ("-d", "--download"):
-			if not arg:
-				print("Please provide a key to download.")
-				usage()
-				sys.exit(1)
-			else:
-				#print(f"Downloading files at: {arg}")
-				if destination_path is None:
-					destination_path = './downloads/'
-				if threads != None:
-					handler.SetMaxDownloadThreads(threads)
-				result = handler.DownloadDirectory(prefix=arg, filter=filter, min_size=min_size, max_size=max_size, destination_root=destination_path)
-				#if result:
-				#	print(f"Downloaded file: {result['fileName']}, Content Type: {result['contentType']}, Size: {result['contentLength']} bytes")
-		elif opt in ("-r", "--remove"):
-			if not arg:
-				print("Please provide a key to delete.")
-				usage()
-				sys.exit(1)
-			else:
-				print(f"Deleting file with key: {arg}")
-				result = handler.Delete(arg)
-				if result:
-					print(f"Deleted file: {arg}, Result: {result}")
-				else:
-					print(f"Failed to delete file: {arg}")
-
-	'''
-
 
 
 if __name__ == "__main__":

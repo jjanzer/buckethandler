@@ -4,6 +4,13 @@ This is a small cli tool and python library that handles querying, retrieving, a
 
 The main use case is for extremely large project files that do not need to persist on disk long term.
 
+## Supported Buckets and Features
+
+| System | Search | Upload | Download | Move | Remove | Get URL |
+| ------ | ------ | ------ | -------- | ---- | ------ | ------- |
+| B2     | Y      | Y      | Y        | N    | Y      | Y       |
+| S3     | Y      | Y      | Y        | N    | N      | N       |
+
 ## Configuration
 
 You must create a config.json file that contains your bucket API credentials. You can either pass in a custom file via `--config` or keep a `config.json` in your current working directory.
