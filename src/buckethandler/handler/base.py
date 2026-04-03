@@ -70,6 +70,9 @@ class BaseHandler():
 		# Note we DO allow "/" symbol
 		return urllib.parse.quote(path)
 
+	def strip_protocol_from_path(self, path):
+		return self._strip_protocol_from_path(path)
+
 	def set_max_download_threads(self,max_threads):
 		self.max_download_threads = max_threads
 

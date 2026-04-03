@@ -398,7 +398,8 @@ class S3Handler(BaseHandler):
 		if with_txt:
 			text = response.text
 
-		if response.status_code != 200:
+		found = response.status_code == 200 or response.status_code == 206
+		if not found:
 			print(f"Failed to download {path_src}: {response.status_code}")
 
 		mtime = headers.get('Last-Modified', None)
@@ -418,7 +419,7 @@ class S3Handler(BaseHandler):
 			'uploadTimestamp': mtime_ts,
 		}
 
-		if write_to_disk and path_dst is not None and len(path_dst) > 0 and response.status_code == 200:
+		if write_to_disk and path_dst is not None and len(path_dst) > 0 and found:
 			self._write_file_to(path_dst, result)
 
 		return result

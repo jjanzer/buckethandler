@@ -72,6 +72,9 @@ class BucketHandler:
 	def set_failsafe_copy(self,path):
 		self.handler.set_failsafe_copy(path)
 
+	def strip_protocol_from_path(self, path):
+		return self.handler.strip_protocol_from_path(path)
+
 # Helpers
 
 def pretty_file_size(bytes:int) -> str:
