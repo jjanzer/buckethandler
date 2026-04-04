@@ -61,6 +61,9 @@ def main():
 
 	parser_url = subparsers.add_parser('url', help='Generate a temporary URL for a file in a remote path. Usage: bh url [remote_path]', parents=[parser_global])
 	parser_url.add_argument('src', nargs='+', help='The remote path to generate a URL for, such as b2://bucket/path/file.txt')
+	parser_url.add_argument('--expires', help='The number of seconds the URL should be valid for, default is 3600 (1 hour)', type=int, default=3600)
+	parser_url.add_argument('--inline', help='Used to disable the download prompt for the url', action='store_true')
+	parser_url.add_argument('--contenttype', help='Forces the content type of the url')
 
 	parser_ls_buckets = subparsers.add_parser('ls-buckets', help='List all buckets in the account', parents=[parser_global])
 
@@ -204,7 +207,10 @@ def main():
 			sys.exit(1)
 
 		handler = bh_src
-		urls = handler.get_download_url(args.src)
+		if handler is None:
+			print("Error initializing handler for url command")
+			sys.exit(1)
+		urls = handler.get_download_url(args.src, expiration_seconds=args.expires, inline=args.inline, content_type=args.contenttype)
 		for url in urls:
 			print(url)
 

@@ -83,6 +83,9 @@ class BucketHandler:
 	def strip_protocol_from_path(self, path):
 		return self.handler.strip_protocol_from_path(path)
 
+	def get_download_url(self,path:Union[str,List[str]],expiration_seconds=60*60, inline=False, content_type=None):
+		return self.handler.get_download_url(path=path, expiration_seconds=expiration_seconds, inline=inline, content_type=content_type)
+
 # Helpers
 
 def pretty_file_size(bytes:int) -> str:

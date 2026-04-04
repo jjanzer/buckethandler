@@ -9,7 +9,7 @@ The main use case is for extremely large project files that do not need to persi
 | System | Search | Upload | Download | Move | Remove | Get URL |
 | ------ | ------ | ------ | -------- | ---- | ------ | ------- |
 | B2     | Y      | Y      | Y        | N    | Y      | Y       |
-| S3     | Y      | Y      | Y        | N    | N      | N       |
+| S3     | Y      | Y      | Y        | N    | N      | Y       |
 
 ## Configuration
 

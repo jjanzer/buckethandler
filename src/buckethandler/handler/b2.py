@@ -253,7 +253,7 @@ class BackblazeB2Handler(BaseHandler):
 		'''
 		self._auto_authenticate()
 
-		content_type = mimetypes.guess_type(path_src)[0] or 'application/octet-stream'
+		content_type = self._get_mime_type(path_src)
 
 		with open(path_src, 'rb') as file:
 			content = file.read()
@@ -300,9 +300,10 @@ class BackblazeB2Handler(BaseHandler):
 			'Authorization': self.token,
 			'Content-Type': 'application/json',
 		}
+		content_type = self._get_mime_type(path)
 		data = {
 			'fileName': remote_path,
-			'contentType': mimetypes.guess_type(path)[0] or 'application/octet-stream',
+			'contentType': content_type,
 			'bucketId': self.config['bucket_id'],
 		}
 		response = self._make_request(url, headers=headers, json=data, method=self.RequestMethod.POST, authenticate=False)
@@ -417,7 +418,7 @@ class BackblazeB2Handler(BaseHandler):
 					raise Exception("Failed to upload chunk")
 
 		# Now that we're done we need to trip the finish call
-		print(f"Tripping finish for file: {file_id} with {shas}")
+		#print(f"Tripping finish for file: {file_id} with {shas}")
 		self._finish_large_file(path_dst, file_id, shas)
 
 		# If we got here we're done
@@ -779,7 +780,7 @@ class BackblazeB2Handler(BaseHandler):
 			raise Exception("Failed to list buckets: " + response.text)
 		return None
 
-	def get_download_url(self,path:Union[str,List[str]],expiration_seconds=60*60):
+	def get_download_url(self,path:Union[str,List[str]],expiration_seconds=60*60, inline=False, content_type=None):
 		'''
 		Generates a URL that is accessible for the specified duration, this file can then be downloaded with a simple GET request
 		This is useful to expose a file from a private bucket to a client, such as in a browser
@@ -806,11 +807,22 @@ class BackblazeB2Handler(BaseHandler):
 				"fileNamePrefix": path,
 				"validDurationInSeconds": expiration_seconds,
 			}
+
+			url_extras = ''
+			if inline:
+				payload['b2ContentDisposition'] = 'inline'
+				url_extras = '&b2ContentDisposition=inline'
+			else:
+				payload['b2ContentDisposition'] = f'attachment; filename="{os.path.basename(path)}"'
+				url_extras = '&b2ContentDisposition=' + self._quote(payload['b2ContentDisposition'])
+			if content_type:
+				payload['b2ContentType'] = content_type
+
 			response = self._make_request(url,json=payload, method=self.RequestMethod.POST, authenticate=True)
 			if response.status_code == 200:
 				temp = response.json()
 
-				download_url = f"{self.download_url}/file/{self.config['bucket_name']}/{path}?Authorization={temp['authorizationToken']}"
+				download_url = f"{self.download_url}/file/{self.config['bucket_name']}/{path}?Authorization={temp['authorizationToken']}{url_extras}"
 				results.append(download_url)
 
 			else:

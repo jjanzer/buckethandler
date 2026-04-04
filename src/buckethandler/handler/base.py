@@ -5,6 +5,12 @@ import glob
 import math
 import threading
 import traceback
+import mimetypes
+try:
+	import magic
+except ImportError:
+	# if python-magic is not installed we can still guess mime types based on file extension, but it will be less accurate
+	pass
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Union, List
@@ -69,6 +75,23 @@ class BaseHandler():
 		'''
 		# Note we DO allow "/" symbol
 		return urllib.parse.quote(path)
+
+	def _get_mime_type(self,path):
+		'''
+		Tries to determine the mime type by checking magic bytes (if libmagic/python-magic is installed)
+		or by guessing based on the file extension. If it can't determine the mime type, it defaults to binary/octet-stream
+		'''
+		if 'magic' in globals():
+			try:
+				mime_type = magic.from_file(path, mime=True)
+				if mime_type:
+					return mime_type
+			except Exception:
+				pass
+		mime_type, _ = mimetypes.guess_type(path)
+		if mime_type is None:
+			mime_type = 'binary/octet-stream'
+		return mime_type
 
 	def strip_protocol_from_path(self, path):
 		return self._strip_protocol_from_path(path)

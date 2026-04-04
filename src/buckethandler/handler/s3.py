@@ -8,6 +8,7 @@ import hmac
 import datetime
 import time
 import requests
+import traceback
 try:
 	import httpx
 except ImportError:
@@ -78,6 +79,49 @@ class S3Handler(BaseHandler):
 		k_signing = self._sign(k_service, "aws4_request")
 		return k_signing
 
+	def _sign_request(self, method, canonical_uri, canonical_querystring, headers, payload_hash, access_key, secret_key, region, amz_date=None, date_stamp=None, service='s3'):
+		# This is mostly lifted from the boto3 implementation
+
+		# See also: https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
+
+		if amz_date is None:
+			amz_date = self._get_amz_datetime()
+		if date_stamp is None:
+			date_stamp = self._get_amz_date()
+
+		canonical_headers = ''
+		signed_headers_list = []
+		for header_key in sorted(headers.keys()):
+			canonical_headers += f"{header_key.lower()}:{headers[header_key].strip()}\n"
+			signed_headers_list.append(header_key.lower())
+		signed_headers = ';'.join(signed_headers_list)
+
+		canonical_request = "\n".join([
+			method,
+			canonical_uri,
+			canonical_querystring,
+			canonical_headers,
+			signed_headers,
+			payload_hash
+		])
+
+		credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
+		string_to_sign = "\n".join([
+			"AWS4-HMAC-SHA256",
+			amz_date,
+			credential_scope,
+			hashlib.sha256(canonical_request.encode()).hexdigest()
+		])
+
+		signing_key = self._get_signature(secret_key, date_stamp, region, service)
+		signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+
+		algorithm = "AWS4-HMAC-SHA256"
+
+		authorization_header = f"{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+
+		return signature, signed_headers, canonical_request, string_to_sign, authorization_header
+
 
 	def _get_amz_datetime(self):
 		t = datetime.datetime.utcnow()
@@ -96,13 +140,13 @@ class S3Handler(BaseHandler):
 		else:
 			raise Exception("No bucket_name found in config")
 
-		key = None
+		secret_key = None
 		if 'secret_key' in self.config:
 			# s3 style
-			key = self.config['secret_key']
+			secret_key = self.config['secret_key']
 		elif 'application_key' in self.config:
 			# b2 style
-			key = self.config['application_key']
+			secret_key = self.config['application_key']
 		else:
 			raise Exception("No secret_key or application_key found in config")
 
@@ -128,6 +172,7 @@ class S3Handler(BaseHandler):
 
 		# This is mostly lifted from the boto3 implementation
 
+		canonical_uri = path
 		canonical_querystring = "&".join(
 			f"{urllib.parse.quote(k, safe='')}={urllib.parse.quote(str(v), safe='')}"
 			for k, v in sorted(params.items())
@@ -142,27 +187,30 @@ class S3Handler(BaseHandler):
 			else:
 				payload_hash = hashlib.sha256(b"").hexdigest()
 
-		canonical_headers = f"host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
-		signed_headers = "host;x-amz-content-sha256;x-amz-date"
-
-		canonical_uri = path
-		canonical_request = f"{method_str}\n{canonical_uri}\n{canonical_querystring}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
-
-		algorithm = "AWS4-HMAC-SHA256"
-		credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
-		string_to_sign = f"{algorithm}\n{amz_date}\n{credential_scope}\n{hashlib.sha256(canonical_request.encode()).hexdigest()}"
-
-		signing_key = self._get_signature(key, date_stamp, region=region, service=service)
-		signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
-
-		auth_header =  f"{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
-
 		extra_headers = {
 			'host': host,
 			'x-amz-content-sha256': payload_hash,
 			'x-amz-date': amz_date,
-			'Authorization': auth_header,
+			#'Authorization': auth_header,
 		}
+		headers_combined = headers.copy() if headers else {}
+		headers_combined.update(extra_headers)
+
+		signature, signed_headers, canonical_request, string_to_sign, authorization_header = self._sign_request(
+			method=method_str,
+			canonical_uri=canonical_uri,
+			canonical_querystring=canonical_querystring,
+			headers=headers_combined,
+			payload_hash=payload_hash,
+			access_key=access_key,
+			secret_key=secret_key,
+			region=region,
+			service=service,
+			amz_date=amz_date,
+			date_stamp=date_stamp,
+		)
+
+		headers_combined['Authorization'] = authorization_header
 
 		size = 0
 
@@ -176,11 +224,6 @@ class S3Handler(BaseHandler):
 		base_url = f"https://{host}"
 
 		url = f"{base_url}{path}?{canonical_querystring}"
-
-		headers_combined = headers.copy() if headers else {}
-		headers_combined.update(extra_headers)
-
-		#buf = io.BytesIO(data) if isinstance(data, bytes) else data
 
 		# Used to optimize the send chunk size
 		send_buffer_size = self.ideal_send_size
@@ -475,26 +518,6 @@ class S3Handler(BaseHandler):
 
 		return result
 
-		destination_root = destination_root.rstrip('/').replace('\\', '/') if destination_root else destination_root
-
-		result = []
-
-		prefixes = []
-		if isinstance(prefix, str):
-			prefixes = [prefix]
-		elif isinstance(prefix, list):
-			prefixes = prefix
-
-		files = {"files": []}
-
-		# Gather the list of files we want to download and determine where they should be downloaded to
-		for prefix in prefixes:
-			prefix = self._strip_protocol_from_path(prefix)
-			res = self._download_by_path(prefix, path_dst=destination_root)
-
-		#with ThreadPoolExecutor(max_workers=self.max_download_threads) as executor:
-
-
 	def _start_large_file_upload(self, path_src:str, path_dst:str) -> dict:
 		# this is a single file upload, not to be confused with the "upload" method which can upload multiple files based on a prefix
 		params = {
@@ -504,7 +527,15 @@ class S3Handler(BaseHandler):
 			path_dst = '/' + path_dst
 		url = path_dst
 
-		response = self._make_request(params=params,path=url,method=self.RequestMethod.POST)
+		headers = {}
+		# can we get the mime type?
+		content_type = self._get_mime_type(path_src)
+		if content_type is not None and content_type != 'binary/octet-stream':
+			# only set the content type if we found something interesting
+			headers['Content-Type'] = content_type
+			params['Content-Type'] = content_type
+
+		response = self._make_request(params=params, headers=headers, path=url, method=self.RequestMethod.POST)
 		if response.status_code == 200:
 			root = ET.fromstring(response.text)
 			upload_id = root.find('.//{http://s3.amazonaws.com/doc/2006-03-01/}UploadId').text
@@ -579,9 +610,6 @@ class S3Handler(BaseHandler):
 
 
 
-
-
-
 	def _upload_large_file(self, path_src:str, path_dst:str):
 		# this is a single file upload, not to be confused with the "upload" method which can upload multiple files based on a prefix
 		upload_data = self._start_large_file_upload(path_src, path_dst)
@@ -651,7 +679,16 @@ class S3Handler(BaseHandler):
 		with open(path_src, 'rb') as f:
 			data = f.read()
 
-		response = self._make_request(params=params,path=path_dst,method=self.RequestMethod.PUT,data=data,payload_hash=sha256_hash)
+		headers = {}
+
+		# can we get the mime type?
+		content_type = self._get_mime_type(path_src)
+		if content_type is not None and content_type != 'binary/octet-stream':
+			# only set the content type if we found something interesting
+			headers['Content-Type'] = content_type
+			params['Content-Type'] = content_type
+
+		response = self._make_request(params=params,headers=headers,path=path_dst,method=self.RequestMethod.PUT,data=data,payload_hash=sha256_hash)
 
 		if response.status_code == 200:
 			return True
@@ -661,3 +698,59 @@ class S3Handler(BaseHandler):
 
 	def upload(self, path_root: Union[str, List[str]], destination_root:str):
 		return super().upload(path_root, destination_root)
+
+	def get_download_url(self,path:Union[str,List[str]],expiration_seconds=60*60,inline=False,content_type=None):
+		paths = [path] if isinstance(path, str) else path
+
+		# aws s3 allows a range from 1minute to 7 days (604800 seconds)
+		# see more at: https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html
+		if expiration_seconds < 60:
+			raise Exception("Expiration seconds must be at least 60")
+		if expiration_seconds > 604800:
+			raise Exception("Expiration seconds must be at most 604800 (7 days)")
+
+		results = []
+
+		for path in paths:
+			path = self._strip_protocol_from_path(path)
+			if not path.startswith('/'):
+				path = '/' + path
+
+			scope = f"{self._get_amz_date()}/{self.config['region']}/s3/aws4_request"
+			payload_hash = "UNSIGNED-PAYLOAD"
+			params = {
+				'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+				'X-Amz-Credential': f"{self.config['access_key']}/{scope}",
+				'X-Amz-Date': self._get_amz_datetime(),
+				'X-Amz-Expires': str(expiration_seconds),
+				'X-Amz-SignedHeaders': 'host',
+			}
+
+			if inline:
+				params['response-content-disposition'] = 'inline'
+			else:
+				params['response-content-disposition'] = f'attachment; filename="{os.path.basename(path)}"'
+
+			if content_type:
+				params['response-content-type'] = content_type
+
+			canonical_uri = path
+			canonical_query = urllib.parse.urlencode(sorted(params.items()), quote_via=urllib.parse.quote)
+			host = f"{self.config['bucket_name']}.s3.{self.config['region']}.backblazeb2.com"
+
+			signature, signed_headers, canonical_request, string_to_sign, authorization_header = self._sign_request(
+				method='GET',
+				canonical_uri=canonical_uri,
+				canonical_querystring=canonical_query,
+				headers={'host': host},
+				payload_hash=payload_hash,
+				access_key=self.config['access_key'],
+				secret_key=self.config['secret_key'],
+				region=self.config['region']
+			)
+
+			# Note we don't actually make a remote request, we generate the url ourselves
+			presigned_url = f"https://{host}{path}?{canonical_query}&X-Amz-Signature={signature}"
+			results.append(presigned_url)
+
+		return results
