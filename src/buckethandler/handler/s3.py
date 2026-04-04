@@ -130,7 +130,7 @@ class S3Handler(BaseHandler):
 		t = datetime.datetime.utcnow()
 		return t.strftime('%Y%m%d')
 
-	def _make_request(self, params:dict={}, path:str="/", headers={}, data=None, json=None, method=RequestMethod.GET, payload_hash:str=''):
+	def _make_request(self, params:dict={}, path:str="/", headers={}, data=None, json=None, method=RequestMethod.GET, payload_hash:str='', raw_headers={}):
 		# for the path we want to only use the path of the url not query params
 		service = 's3'
 
@@ -211,6 +211,10 @@ class S3Handler(BaseHandler):
 		)
 
 		headers_combined['Authorization'] = authorization_header
+
+		# raw headers are added to the actual request w/o being in the signature
+		if raw_headers:
+			headers_combined.update(raw_headers)
 
 		size = 0
 
@@ -430,11 +434,11 @@ class S3Handler(BaseHandler):
 		if not path_src.startswith('/'):
 			path_src = '/' + path_src
 
-		headers = {}
+		raw_headers = {}
 		if start != None and end != None:
-			headers['Range'] = f"bytes={start}-{end}"
+			raw_headers['Range'] = f"bytes={start}-{end}"
 
-		response = self._make_request(params=params,path=path_src,method=self.RequestMethod.GET, headers=headers)
+		response = self._make_request(params=params,path=path_src,method=self.RequestMethod.GET, raw_headers=raw_headers)
 		headers = response.headers
 
 		text = None
