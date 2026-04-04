@@ -52,12 +52,20 @@ class BucketHandler:
 		return self.handler is not None
 
 	def search(self, prefix, include=None, min_size=None, max_size=None, include_dirs=True, include_files=True, recurse=True):
+		if min_size is not None and isinstance(min_size, str):
+			min_size = from_pretty_file_size(min_size)
+		if max_size is not None and isinstance(max_size, str):
+			max_size = from_pretty_file_size(max_size)
 		return self.handler.search(prefix=prefix, include=include, min_size=min_size, max_size=max_size, include_dirs=include_dirs, include_files=include_files, recurse=recurse)
 
 	def upload(self, path_root: Union[str, List[str]], destination_root:str):
 		return self.handler.upload(path_root=path_root, destination_root=destination_root)
 
 	def download(self, prefix: Union[str, List[str]], destination_root=None, include=None, min_size=None, max_size=None, recurse=True, preserve_dir_prefix=False):
+		if min_size is not None and isinstance(min_size, str):
+			min_size = from_pretty_file_size(min_size)
+		if max_size is not None and isinstance(max_size, str):
+			max_size = from_pretty_file_size(max_size)
 		return self.handler.download(prefix=prefix, destination_root=destination_root, include=include, min_size=min_size, max_size=max_size, recurse=recurse, preserve_dir_prefix=preserve_dir_prefix)
 
 	def set_max_download_threads(self,max_threads):
