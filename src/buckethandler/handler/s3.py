@@ -18,7 +18,6 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from enum import Enum
 from typing import List, Union
-from importlib_metadata import files
 from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor,wait,as_completed,Future
 
 '''
