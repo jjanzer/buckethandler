@@ -6,10 +6,33 @@ The main use case is for extremely large project files that do not need to persi
 
 ## Supported Buckets and Features
 
-| System | Search | Upload | Download | Move | Remove | Get URL |
-| ------ | ------ | ------ | -------- | ---- | ------ | ------- |
-| B2     | Y      | Y      | Y        | N    | Y      | Y       |
-| S3     | Y      | Y      | Y        | N    | N      | Y       |
+| System        | Search | Upload | Download | Move | Remove | Get URL |
+| ------------- | ------ | ------ | -------- | ---- | ------ | ------- |
+| Backblaze B2  | Y      | Y      | Y        | N    | Y      | Y       |
+| Amazon S3     | Y      | Y      | Y        | N    | N      | Y       |
+| DropBox       | Y      | Y      | Y        | N    | N      | Y       |
+
+## Installation
+
+To get access to local and http/https files you can run:
+```
+pip install buckethandler
+```
+
+If you need dropbox support you will need to install the optional dropbox requirements. S3 and B2 support is custom and builtin.
+```
+pip install buckethandler[dropbox]
+```
+or simply
+```
+pip install dropbox
+```
+
+If you don't want to use pip and instead want to install locally via this copy (or want to contribute development) you can run the following after cloning and cd'ing into the repository.
+
+```
+pip install -e .
+```
 
 ## Configuration
 
@@ -17,6 +40,8 @@ You must create a config.json file that contains your bucket API credentials. Yo
 
 It is advised to first setup a test bucket until you get things working before using your production bucket. Be aware this library has the ability to write and remove files on your bucket if your credentials allow it.
 
+### Backblaze B2
+b2 sample config
 ```
 {
 	"account_key": "YourAccountKey",
@@ -25,6 +50,29 @@ It is advised to first setup a test bucket until you get things working before u
 	"bucket_id": "YourBucketId"
 }
 ```
+
+### Amazon S3
+s3 sample config
+```
+{
+	"access_key": "YourAccessKey",
+	"secret_key": "YourSecretKey",
+	"bucket_name": "YourBucketName",
+	"bucket_id": "YourBucketId",
+	"region": "us-east-001"
+}
+```
+
+### DropBox
+db sample config
+```
+	"dropbox_app_key": "YourAppKey",
+	"dropbox_secret": "YourSecretKey",
+	"dropbox_refresh_token": "YourShortRefreshToken",
+	"dropbox_access_token": "YourVeryLongAccessToken"
+```
+
+Note, you can get the `dropbox_access_token` and `dropbox_refresh_token` by triggering the `bh authorize --dropbox --config=YourConfig.json` argument to the CLI interface. Your `dropbox_app_key` and `dropbox_secret` come from creating an application in dropbox account settings.
 
 # Usage
 

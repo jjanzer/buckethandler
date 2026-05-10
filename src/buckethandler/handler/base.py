@@ -76,12 +76,12 @@ class BaseHandler():
 		# Note we DO allow "/" symbol
 		return urllib.parse.quote(path)
 
-	def _get_mime_type(self,path):
+	def _get_mime_type(self,path,try_magic=True):
 		'''
 		Tries to determine the mime type by checking magic bytes (if libmagic/python-magic is installed)
 		or by guessing based on the file extension. If it can't determine the mime type, it defaults to binary/octet-stream
 		'''
-		if 'magic' in globals():
+		if 'magic' in globals() and try_magic:
 			try:
 				mime_type = magic.from_file(path, mime=True)
 				if mime_type:
@@ -90,7 +90,15 @@ class BaseHandler():
 				pass
 		mime_type, _ = mimetypes.guess_type(path)
 		if mime_type is None:
-			mime_type = 'binary/octet-stream'
+			#mimetypes uses a db that can be out of date, so we've added a few common types we've run across
+			known_pairs = [('.glb', 'model/gltf-binary'), ('.gltf', 'model/gltf+json')]
+			for ext, mt in known_pairs:
+				if path.lower().endswith(ext):
+					mime_type = mt
+					break
+
+			if mime_type is None:
+				mime_type = 'binary/octet-stream'
 		return mime_type
 
 	def strip_protocol_from_path(self, path):
@@ -109,7 +117,13 @@ class BaseHandler():
 		# set to a path if you want to use a failsafe copy for when upload fails
 		self.failsafe_copy = path
 
-	def search(self,prefix:Union[str,List[str]]='',include=None,min_size=None,max_size=None,include_dirs=True,include_files=True, recurse=True):
+	def _sort_search_results(self, files):
+		'''
+		Sorts the search results so that files are always returned before directories and then alphabetically, this is to ensure a consistent order across handlers since some handlers might return files before directories and some might return directories before files
+		'''
+		files['files'].sort(key=lambda x: (x['fileName'].count('/'), x['fileName'].lower()))
+		return files
+	def search(self,prefix:Union[str,List[str]]='',include=None,min_size=None,max_size=None,include_dirs=True,include_files=True, recurse=True, limit=0):
 		raise NotImplementedError("Search method not implemented for this handler")
 
 	# individual handlers should implement these methods
@@ -163,17 +177,18 @@ class BaseHandler():
 			tmp_files = self.search(prefix=prefix, include=include, min_size=min_size, max_size=max_size,include_dirs=include_dirs, include_files=include_files, recurse=recurse)
 
 			for idx,file in enumerate(tmp_files['files']):
+				filename = file['fileName'].lstrip('/')
 				path_dst = None
 				if preserve_dir_prefix:
 					# we want to preserve the relative path after the prefix, so we need to calculate that and store it for later when we do the download
-					path_dst = destination_root + '/' + file['fileName']
+					path_dst = destination_root + '/' + filename
 				else:
 					# if we have something like prefix = "2026" and the file is "2026/logs/123.txt" we want destination_root + "/2026/logs/123.txt" since "logs" is a dir
-					if file['fileName'] == prefix:
+					if filename == prefix:
 						# we've requested the exact file
-						path_dst = destination_root + '/' + os.path.basename(file['fileName'])
+						path_dst = destination_root + '/' + os.path.basename(filename)
 					else:
-						relative_path = file['fileName'][len(prefix):].lstrip('/')
+						relative_path = filename[len(prefix):].lstrip('/')
 						# now we'll have something like logs/123.txt
 
 						# add back the "last" folder of the prefix
@@ -344,4 +359,10 @@ class BaseHandler():
 					else:
 						return False
 		return result
+
+	def initiate_auth(self):
+		'''
+		Initiates the authentication process for the handler, this is usually only needed for handlers that require user interaction to authenticate like Dropbox, for handlers like S3 or B2 this can be left unimplemented since they can just use the access keys from the config file
+		'''
+		raise NotImplementedError("Initiate auth method not implemented for this handler")
 

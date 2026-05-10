@@ -20,8 +20,13 @@ import re
 import json
 import argparse
 import textwrap
+import traceback
+try:
+	import webbrowser
+except ImportError:
+	webbrowser = None
 
-from .buckethandler import BucketHandler, pretty_file_size, from_pretty_file_size, pretty_print_files
+from .buckethandler import BucketHandler, BucketHandlerType, pretty_print_files
 
 
 
@@ -48,6 +53,7 @@ def main():
 
 	parser_ls = subparsers.add_parser('ls', help='List files in a remote path. Usage: bh ls [remote_path]', parents=[parser_global])
 	parser_ls.add_argument('src', nargs="+", help='The remote path to list, such as b2://bucket/prefix/')
+	parser_ls.add_argument('--limit', help='Limit the number of files to return in a search')
 
 	parser_cp = subparsers.add_parser('cp', help='Copy files between local and remote paths. Usage: bh cp [src] [dst]', parents=[parser_global])
 	parser_cp.add_argument('src', nargs='+', help='The source path may be local or remote, context depends on the command')
@@ -64,6 +70,9 @@ def main():
 	parser_url.add_argument('--expires', help='The number of seconds the URL should be valid for, default is 3600 (1 hour)', type=int, default=3600)
 	parser_url.add_argument('--inline', help='Used to disable the download prompt for the url', action='store_true')
 	parser_url.add_argument('--contenttype', help='Forces the content type of the url')
+
+	parser_authorize = subparsers.add_parser('authorize', help='Command for generating tokens and access', parents=[parser_global])
+	parser_authorize.add_argument('--dropbox', help='Authorize the application against dropbox, this will trigger a browser page', action='store_true')
 
 	parser_ls_buckets = subparsers.add_parser('ls-buckets', help='List all buckets in the account', parents=[parser_global])
 
@@ -87,6 +96,7 @@ def main():
 		except Exception as e:
 			#print(f"Error initializing source handler: {e}")
 			#sys.exit(1)
+			#traceback.print_exc()
 			pass
 	if 'dst' in args:
 		try:
@@ -101,28 +111,26 @@ def main():
 	include_files = not args.nofiles
 	recurse = not args.norecurse
 
+
+	if args.cmd == 'authorize':
+		config = json.load(open(args.config))
+		if args.dropbox:
+			handler = BucketHandler(args.config, path="db://", handler_type=BucketHandlerType.DROPBOX).handler
+			handler.initiate_auth()
+
 	if args.cmd == 'ls':
-		'''
-		# make sure src is provided and is a remote path
-		if args.src is None:
-			print("Please provide a remote path to list, such as b2://bucket/prefix/")
-			sys.exit(1)
-		if protocol_src is None:
-			print("Please provide a remote path to list, such as b2://bucket/prefix/")
-			sys.exit(1)
-
-		handler = None
-		if protocol_src == 'b2':
-			handler = b2.BackblazeB2Handler(args.config)
-		elif protocol_src == 's3':
-			handler = s3.S3Handler(args.config)
-		else:
-			print("Unsupported protocol, only b2:// and s3:// are supported")
-			sys.exit(1)
-		'''
-
+		limit = 0
+		if args.limit is not None:
+			try:
+				limit = int(args.limit)
+				if limit < 0:
+					print("Limit must be a non-negative integer")
+					sys.exit(1)
+			except ValueError:
+				print("Invalid limit value, must be an integer")
+				sys.exit(1)
 		if bh_src is not None:
-			files = bh_src.search(prefix=args.src, include=args.include, min_size=args.minsize, max_size=args.maxsize, include_dirs=include_dirs, include_files=include_files, recurse=recurse)
+			files = bh_src.search(prefix=args.src, include=args.include, min_size=args.minsize, max_size=args.maxsize, include_dirs=include_dirs, include_files=include_files, recurse=recurse, limit=limit)
 			if files != None and 'files' in files:
 				pretty_print_files(files)
 

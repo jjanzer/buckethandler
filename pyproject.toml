@@ -19,6 +19,12 @@ dependencies = [
 	"requests"
 ]
 
+[project.optional-dependencies]
+# dropbox support requires the dropbox pip package
+dropbox = [
+	"dropbox>=12.0.0",
+]
+
 [project.scripts]
 bh = "buckethandler.cli:main"
 

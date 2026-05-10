@@ -681,7 +681,7 @@ class BackblazeB2Handler(BaseHandler):
 			raise Exception("Failed to list files: " + response.text)
 		return None
 
-	def search(self,prefix:Union[str,List[str]]='',include=None,min_size=None,max_size=None,include_dirs=True,include_files=True, recurse=True):
+	def search(self,prefix:Union[str,List[str]]='',include=None,min_size=None,max_size=None,include_dirs=True,include_files=True, recurse=True, limit=0):
 		self._auto_authenticate()
 
 		prefixes = []
@@ -763,6 +763,8 @@ class BackblazeB2Handler(BaseHandler):
 
 			#print(f"Considered: {considered} final count: {len(result['files'])}")
 			results['files'].extend(result['files'])
+			if limit > 0 and len(results['files']) >= limit:
+				break
 
 		return results
 

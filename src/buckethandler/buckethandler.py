@@ -11,6 +11,7 @@ from .handler.s3 import S3Handler
 class BucketHandlerType(Enum):
 	B2 = 1
 	S3 = 2
+	DROPBOX = 3
 	UNKNOWN = 99
 
 class BucketHandler:
@@ -28,6 +29,9 @@ class BucketHandler:
 		elif self.handler_type == BucketHandlerType.S3:
 			from .handler.s3 import S3Handler
 			self.handler = S3Handler(config)
+		elif self.handler_type == BucketHandlerType.DROPBOX:
+			from .handler.dropbox import DropboxHandler
+			self.handler = DropboxHandler(config)
 		else:
 			raise ValueError(f"Unknown handler type for path: {path}")
 
@@ -45,18 +49,23 @@ class BucketHandler:
 			return BucketHandlerType.B2
 		elif path.startswith("s3://"):
 			return BucketHandlerType.S3
+		elif path.startswith("db://"):
+			return BucketHandlerType.DROPBOX
 		else:
 			return BucketHandlerType.UNKNOWN
 
 	def __bool__(self):
 		return self.handler is not None
 
-	def search(self, prefix, include=None, min_size=None, max_size=None, include_dirs=True, include_files=True, recurse=True):
+	def search(self, prefix, include=None, min_size=None, max_size=None, include_dirs=True, include_files=True, recurse=True, limit=0):
 		if min_size is not None and isinstance(min_size, str):
 			min_size = from_pretty_file_size(min_size)
 		if max_size is not None and isinstance(max_size, str):
 			max_size = from_pretty_file_size(max_size)
-		return self.handler.search(prefix=prefix, include=include, min_size=min_size, max_size=max_size, include_dirs=include_dirs, include_files=include_files, recurse=recurse)
+		results = self.handler.search(prefix=prefix, include=include, min_size=min_size, max_size=max_size, include_dirs=include_dirs, include_files=include_files, recurse=recurse, limit=limit)
+		if limit > 0 and len(results.get('files', [])) > limit:
+			results['files'] = results['files'][:limit]
+		return results
 
 	def upload(self, path_root: Union[str, List[str]], destination_root:str):
 		return self.handler.upload(path_root=path_root, destination_root=destination_root)

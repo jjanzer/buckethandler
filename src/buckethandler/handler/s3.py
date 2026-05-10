@@ -328,7 +328,7 @@ class S3Handler(BaseHandler):
 					'fileName': p,
 					'contentLength': 0,
 					'contentType': None,
-					'ContentMD5': None,
+					'contentMD5': None,
 					'etag': None,
 					'uploadTimestamp': 0,
 					'action': 'folder',
@@ -344,11 +344,13 @@ class S3Handler(BaseHandler):
 				last_modified_dt = datetime.datetime.strptime(last_modified, '%Y-%m-%dT%H:%M:%S.%fZ')
 				last_modified_ts = int(last_modified_dt.timestamp() * 1000)
 
+				content_type = self._get_mime_type(key,try_magic=False)
+
 				result_dict['files'].append({
 					'fileName': key,
 					'contentLength': size,
-					'contentType': None, # You have to make a separate request to get the content type, it's not included in the listing response
-					'ContentMD5': None,
+					'contentType': content_type, # this isn't "true", it's guessed, otherwise we'd make a call per file
+					'contentMD5': None,
 					'etag': etag, # this is sometimes the md5, but not always
 					'uploadTimestamp': last_modified_ts,
 					'action': 'upload',
@@ -365,7 +367,7 @@ class S3Handler(BaseHandler):
 		return result_dict
 
 
-	def search(self,prefix:Union[str,List[str]]='',include=None,min_size=None,max_size=None,include_dirs=True,include_files=True, recurse=True) -> dict:
+	def search(self,prefix:Union[str,List[str]]='',include=None,min_size=None,max_size=None,include_dirs=True,include_files=True, recurse=True, limit=0) -> dict:
 		#self._auto_authenticate()
 		if isinstance(prefix, str):
 			prefix = [prefix]
@@ -395,6 +397,11 @@ class S3Handler(BaseHandler):
 						continue
 
 				result['files'].append(file)
+				if limit > 0 and len(result['files']) >= limit:
+					break
+
+			if limit > 0 and len(result['files']) >= limit:
+				break
 
 		return result
 
@@ -488,10 +495,6 @@ class S3Handler(BaseHandler):
 			futures = []
 
 			for file in files['files']:
-
-				# .bzEmpty files are special holders to keep a folder "open" without files
-				if file['fileName'].endswith('.bzEmpty'):
-					continue
 
 				# where we do want to download this to?
 				path_dst = file['path_dst']
