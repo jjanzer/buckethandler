@@ -10,7 +10,7 @@ The main use case is for extremely large project files that do not need to persi
 | ------------- | ------ | ------ | -------- | ---- | ------ | ------- |
 | Backblaze B2  | Y      | Y      | Y        | N    | Y      | Y       |
 | Amazon S3     | Y      | Y      | Y        | N    | N      | Y       |
-| DropBox       | Y      | Y      | Y        | N    | N      | Y       |
+| Dropbox       | Y      | Y      | Y        | N    | N      | Y       |
 
 ## Installation
 
@@ -63,7 +63,7 @@ s3 sample config
 }
 ```
 
-### DropBox
+### Dropbox
 db sample config
 ```
 	"dropbox_app_key": "YourAppKey",
