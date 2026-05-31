@@ -3,6 +3,7 @@ import sys
 import re
 import traceback
 import hashlib
+from datetime import datetime, timedelta, timezone
 
 try:
 	import webbrowser
@@ -28,6 +29,8 @@ class DropboxHandler(BaseHandler):
 	def _authorize(self):
 		'''
 		Handle authorizing with Dropbox, this is called automatically
+
+		For specific internal API see: https://dropbox-sdk-python.readthedocs.io/en/latest/
 
 		There are two ways to get authenticated with Dropbox,
 		The first is through a user access token which is tied to the user's account
@@ -358,14 +361,14 @@ class DropboxHandler(BaseHandler):
 		self._auto_authenticate()
 		# Dropbox doesn't have a way to generate a download url without sharing the file, so we'll create a shared link with an expiration and return that
 
-		print(f"Generating download URL for {path} with expiration of {expiration_seconds} seconds, inline={inline}, content_type={content_type}")
+		#print(f"Generating download URL for {path} with expiration of {expiration_seconds} seconds, inline={inline}, content_type={content_type}")
 
 		if isinstance(path, str):
 			path = [path]
 
 		expiration_timestamp = None
 		if expiration_seconds is not None and expiration_seconds > 0:
-			expiration_timestamp = dropbox.common.Timestamp.now() + expiration_seconds
+			expiration_timestamp = datetime.now(timezone.utc) + timedelta(seconds=expiration_seconds)
 
 		results = []
 		for p in path:
@@ -379,7 +382,7 @@ class DropboxHandler(BaseHandler):
 				results.append(link_metadata.url)
 			except Exception as e:
 				#does the link already exist?
-				if isinstance(e, dropbox.exceptions.ApiError) and e.error.is_shared_link_already_exists():
+				if (isinstance(e, dropbox.exceptions.ApiError) and e.error.is_shared_link_already_exists()) or "shared_link_already_exists" in str(e):
 					try:
 						links = self.dbx_user.sharing_list_shared_links(path=path_root, direct_only=True).links
 
