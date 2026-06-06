@@ -45,15 +45,18 @@ class BackblazeB2Handler(BaseHandler):
 		# B2 only supports files up to 5GB and then they need to use a separate API for uploading
 		self.large_file_upload_limit = 1024 * 1024 * 1024 # 1GB limit
 
-
+	def _prep_config(self, config):
+		keys_required = ['BH_PUBLIC_KEY', 'BH_SECRET_KEY', 'BH_BUCKET_NAME', 'BH_BUCKET_ID']
+		config = self._extend_config_from_env(config, keys_required)
+		return config
 
 	def _strip_protocol_from_path(self,path:str) -> str:
 		if path[:5].lower().startswith('b2://'):
 			return path[5:]
 		return path
 
-	def _encode_credentials(self,account_key, application_key):
-		credentials = f"{account_key}:{application_key}"
+	def _encode_credentials(self,bh_public_key, bh_secret_key):
+		credentials = f"{bh_public_key}:{bh_secret_key}"
 		bytes = credentials.encode('utf-8')
 		encoded = base64.b64encode(bytes)
 		return encoded.decode('utf-8')
@@ -63,9 +66,9 @@ class BackblazeB2Handler(BaseHandler):
 
 	def _authenticate(self):
 		url = f"{self.base_url}/b2_authorize_account"
-		credentials = self._encode_credentials(self.config['account_key'], self.config['application_key'])
+		credentials = self._encode_credentials(self.config['BH_PUBLIC_KEY'], self.config['BH_SECRET_KEY'])
 		headers = {
-			'Authorization': f"Basic{credentials}"
+			'Authorization': f"Basic {credentials}"
 		}
 		response = requests.get(url, headers=headers)
 		if response.status_code == 200:
@@ -142,7 +145,7 @@ class BackblazeB2Handler(BaseHandler):
 		raise Exception(f"Failed to make request after retries: {response_status_code}")
 
 	def _get_upload_key(self):
-		url = f"{self.base_url}/b2_get_upload_url?bucketId={self.config['bucket_id']}"
+		url = f"{self.base_url}/b2_get_upload_url?bucketId={self.config['BH_BUCKET_ID']}"
 
 		response = self._make_request(url, method=self.RequestMethod.GET, authenticate=True)
 
@@ -304,7 +307,7 @@ class BackblazeB2Handler(BaseHandler):
 		data = {
 			'fileName': remote_path,
 			'contentType': content_type,
-			'bucketId': self.config['bucket_id'],
+			'bucketId': self.config['BH_BUCKET_ID'],
 		}
 		response = self._make_request(url, headers=headers, json=data, method=self.RequestMethod.POST, authenticate=False)
 		if response.status_code == 200:
@@ -458,7 +461,7 @@ class BackblazeB2Handler(BaseHandler):
 
 	def download_by_name(self, name, destination_root=None,destination_path=None,with_txt=False, start=None, end=None, write_to_disk=True):
 		self._auto_authenticate()
-		url = f"{self.root_url}/file/{self.config['bucket_name']}/{name}"
+		url = f"{self.root_url}/file/{self.config['BH_BUCKET_NAME']}/{name}"
 
 		headers = {}
 
@@ -533,7 +536,7 @@ class BackblazeB2Handler(BaseHandler):
 			dict: The result of the search operation, including all versions of the file.
 		'''
 		self._auto_authenticate()
-		url = f"{self.base_url}/b2_list_file_versions?bucketId={self.config['bucket_id']}&prefix={self._quote(path)}&maxFileCount=10000"
+		url = f"{self.base_url}/b2_list_file_versions?bucketId={self.config['BH_BUCKET_ID']}&prefix={self._quote(path)}&maxFileCount=10000"
 		response = self._make_request(url, method=self.RequestMethod.GET, authenticate=True)
 		if response.status_code == 200:
 			return response.json()
@@ -664,7 +667,7 @@ class BackblazeB2Handler(BaseHandler):
 		'''
 		Requests a list of files, can be paginated using next_file_name
 		'''
-		url = f"{self.base_url}/b2_list_file_names?bucketId={self.config['bucket_id']}"
+		url = f"{self.base_url}/b2_list_file_names?bucketId={self.config['BH_BUCKET_ID']}"
 		if prefix != None and len(prefix) > 0:
 			url += f"&prefix={self._quote(prefix)}"
 		if recurse == False:
@@ -773,7 +776,7 @@ class BackblazeB2Handler(BaseHandler):
 		url = f"{self.base_url}/b2_list_buckets"
 		payload = {
 			'accountId': self.accountId,
-			'bucketId': self.config['bucket_id'], # we need to specify a bucket with a bucket restricted key
+			'bucketId': self.config['BH_BUCKET_ID'], # we need to specify a bucket with a bucket restricted key
 		}
 		response = self._make_request(url, json=payload, method=self.RequestMethod.POST, authenticate=True)
 		if response.status_code == 200:
@@ -805,7 +808,7 @@ class BackblazeB2Handler(BaseHandler):
 			path = self._strip_protocol_from_path(path)
 
 			payload = {
-				"bucketId": self.config['bucket_id'],
+				"bucketId": self.config['BH_BUCKET_ID'],
 				"fileNamePrefix": path,
 				"validDurationInSeconds": expiration_seconds,
 			}
@@ -824,7 +827,7 @@ class BackblazeB2Handler(BaseHandler):
 			if response.status_code == 200:
 				temp = response.json()
 
-				download_url = f"{self.download_url}/file/{self.config['bucket_name']}/{path}?Authorization={temp['authorizationToken']}{url_extras}"
+				download_url = f"{self.download_url}/file/{self.config['BH_BUCKET_NAME']}/{path}?Authorization={temp['authorizationToken']}{url_extras}"
 				results.append(download_url)
 
 			else:

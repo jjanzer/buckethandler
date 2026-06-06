@@ -41,9 +41,9 @@ class DropboxHandler(BaseHandler):
 
 		try:
 			self.dbx = dropbox.Dropbox(
-				app_key = self.config["dropbox_app_key"],
-				app_secret = self.config["dropbox_secret"],
-				oauth2_refresh_token = self.config["dropbox_refresh_token"]
+				app_key = self.config["BH_PUBLIC_KEY"],
+				app_secret = self.config["BH_SECRET_KEY"],
+				oauth2_refresh_token = self.config["BH_REFRESH_TOKEN"]
 			)
 
 			root_namespace_id = self.dbx.users_get_current_account().root_info.root_namespace_id
@@ -104,7 +104,7 @@ class DropboxHandler(BaseHandler):
 		raise Exception("Team member not found")
 
 	def _oauth_login(self):
-		auth_flow = dropbox.DropboxOAuth2FlowNoRedirect(self.config["dropbox_app_key"], self.config["dropbox_secret"])
+		auth_flow = dropbox.DropboxOAuth2FlowNoRedirect(self.config["BH_PUBLIC_KEY"], self.config["BH_SECRET_KEY"])
 		authorize_url = auth_flow.start()
 		print("1. Go to: " + authorize_url)
 		print("2. Click 'Allow' (you might have to log in first)")
@@ -117,13 +117,19 @@ class DropboxHandler(BaseHandler):
 			self.dbx = dropbox.Dropbox(
 				oauth2_access_token=oauth_result.access_token,
 				oauth2_refresh_token=oauth_result.refresh_token,
-				app_key=self.config["dropbox_app_key"],
-				app_secret=self.config["dropbox_secret"]
+				app_key=self.config["BH_PUBLIC_KEY"],
+				app_secret=self.config["BH_SECRET_KEY"]
 			)
 			print("Successfully authenticated with Dropbox!")
 		except Exception as e:
 			print("Error during Dropbox authentication: " + str(e))
 			sys.exit(1)
+
+	def _prep_config(self, config) -> dict:
+		keys_required = ['BH_PUBLIC_KEY', 'BH_SECRET_KEY']
+		keys_optional = ['BH_ACCESS_TOKEN', 'BH_REFRESH_TOKEN']
+		config = self._extend_config_from_env(config, keys_required, keys_optional)
+		return config
 
 	def _strip_protocol_from_path(self,path:str) -> str:
 		'''
@@ -435,8 +441,8 @@ class DropboxHandler(BaseHandler):
 		data = {
 			"code": code,
 			"grant_type": "authorization_code",
-			"client_id": self.config["dropbox_app_key"],
-			"client_secret": self.config["dropbox_secret"],
+			"client_id": self.config["BH_PUBLIC_KEY"],
+			"client_secret": self.config["BH_SECRET_KEY"],
 		}
 		response = requests.post(url, data=data)
 
@@ -458,8 +464,8 @@ class DropboxHandler(BaseHandler):
 		data = {
 			"refresh_token": refresh_token,
 			"grant_type": "refresh_token",
-			"client_id": self.config["dropbox_app_key"],
-			"client_secret": self.config["dropbox_secret"],
+			"client_id": self.config["BH_PUBLIC_KEY"],
+			"client_secret": self.config["BH_SECRET_KEY"],
 		}
 		response = requests.post(url, data=data)
 

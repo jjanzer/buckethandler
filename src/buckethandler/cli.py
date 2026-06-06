@@ -26,7 +26,7 @@ try:
 except ImportError:
 	webbrowser = None
 
-from .buckethandler import BucketHandler, BucketHandlerType, pretty_print_files
+from .buckethandler import BucketHandler, BucketHandlerType, BucketHandlerHandlerTypeException, pretty_print_files
 
 
 
@@ -93,19 +93,23 @@ def main():
 		try:
 			bh_src = BucketHandler(args.config, path=args.src)
 			protocol_src = bh_src.handler_type
+		except BucketHandlerHandlerTypeException as e:
+			if 'dst' not in args:
+				print(f"Error initializing source handler: {e}")
+				sys.exit(1)
 		except Exception as e:
-			#print(f"Error initializing source handler: {e}")
-			#sys.exit(1)
+			print(f"Error initializing source handler: {e}")
+			sys.exit(1)
 			#traceback.print_exc()
-			pass
 	if 'dst' in args:
 		try:
 			bh_dst = BucketHandler(args.config, path=args.dst)
 			protocol_dst = bh_dst.handler_type
-		except Exception as e:
-			#print(f"Error initializing destination handler: {e}")
-			#sys.exit(1)
+		except BucketHandlerHandlerTypeException as e:
 			pass
+		except Exception as e:
+			print(f"Error initializing destination handler: {e}")
+			sys.exit(1)
 
 	include_dirs = not args.nodirs
 	include_files = not args.nofiles

@@ -53,6 +53,12 @@ class S3Handler(BaseHandler):
 		self.large_file_upload_limit = 5 * 1024 * 1024 # testing
 		self.large_file_upload_limit_min= 5 * 1024 * 1024 # 5MB, this is a hard requirement from s3
 
+	def _prep_config(self, config):
+		keys_required = ['BH_PUBLIC_KEY', 'BH_SECRET_KEY', 'BH_BUCKET_NAME', 'BH_REGION_ID']
+		keys_optional = ['BH_B2_AS_S3']
+		config = self._extend_config_from_env(config, keys_required, keys_optional)
+		return config
+
 	def _strip_protocol_from_path(self,path:str) -> str:
 		if path[:5].lower().startswith('s3://'):
 			return path[5:]
@@ -134,37 +140,23 @@ class S3Handler(BaseHandler):
 		service = 's3'
 
 		bucket = None
-		if 'bucket_name' in self.config:
-			bucket = self.config['bucket_name']
-		else:
-			raise Exception("No bucket_name found in config")
 
-		secret_key = None
-		if 'secret_key' in self.config:
-			# s3 style
-			secret_key = self.config['secret_key']
-		elif 'application_key' in self.config:
-			# b2 style
-			secret_key = self.config['application_key']
-		else:
-			raise Exception("No secret_key or application_key found in config")
+		bh_public_key = self.config['BH_PUBLIC_KEY']
+		bh_secret_key = self.config['BH_SECRET_KEY']
+		bh_bucket_name = self.config['BH_BUCKET_NAME']
+		bh_region_id = self.config['BH_REGION_ID']
 
-		access_key = None
-		if 'access_key' in self.config:
-			access_key = self.config['access_key']
-		elif 'account_key' in self.config:
-			access_key = self.config['account_key']
-		else:
-			raise Exception("No access_key or account_key found in config")
+		access_key = bh_public_key
+		secret_key = bh_secret_key
+		region = bh_region_id
 
-		region = None
-		if 'region' in self.config:
-			region = self.config['region']
-		else:
-			raise Exception("No region found in config")
+		suffix = "amazonaws.com"
+		if self.config.get('BH_B2_AS_S3', False):
+			suffix = "backblazeb2.com"
+
 
 		method_str = method.name if isinstance(method, self.RequestMethod) else str(method)
-		host = f"{bucket}.s3.{region}.backblazeb2.com"
+		host = f"{bh_bucket_name}.s3.{region}.{suffix}"
 
 		amz_date = self._get_amz_datetime()
 		date_stamp = self._get_amz_date()
@@ -722,11 +714,11 @@ class S3Handler(BaseHandler):
 			if not path.startswith('/'):
 				path = '/' + path
 
-			scope = f"{self._get_amz_date()}/{self.config['region']}/s3/aws4_request"
+			scope = f"{self._get_amz_date()}/{self.config['BH_REGION_ID']}/s3/aws4_request"
 			payload_hash = "UNSIGNED-PAYLOAD"
 			params = {
 				'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
-				'X-Amz-Credential': f"{self.config['access_key']}/{scope}",
+				'X-Amz-Credential': f"{self.config['BH_PUBLIC_KEY']}/{scope}",
 				'X-Amz-Date': self._get_amz_datetime(),
 				'X-Amz-Expires': str(expiration_seconds),
 				'X-Amz-SignedHeaders': 'host',
@@ -742,7 +734,10 @@ class S3Handler(BaseHandler):
 
 			canonical_uri = path
 			canonical_query = urllib.parse.urlencode(sorted(params.items()), quote_via=urllib.parse.quote)
-			host = f"{self.config['bucket_name']}.s3.{self.config['region']}.backblazeb2.com"
+			suffix = "amazonaws.com"
+			if self.config.get('BH_B2_AS_S3', False):
+				suffix = "backblazeb2.com"
+			host = f"{self.config['BH_BUCKET_NAME']}.s3.{self.config['BH_REGION_ID']}.{suffix}"
 
 			signature, signed_headers, canonical_request, string_to_sign, authorization_header = self._sign_request(
 				method='GET',
@@ -750,9 +745,9 @@ class S3Handler(BaseHandler):
 				canonical_querystring=canonical_query,
 				headers={'host': host},
 				payload_hash=payload_hash,
-				access_key=self.config['access_key'],
-				secret_key=self.config['secret_key'],
-				region=self.config['region']
+				access_key=self.config['BH_PUBLIC_KEY'],
+				secret_key=self.config['BH_SECRET_KEY'],
+				region=self.config['BH_REGION_ID']
 			)
 
 			# Note we don't actually make a remote request, we generate the url ourselves

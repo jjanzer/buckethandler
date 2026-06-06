@@ -18,9 +18,21 @@ from typing import Union, List
 class BaseHandler():
 	def __init__(self, config):
 		if isinstance(config, str):
+			# Load the config file from disk
 			config = self._load_config_file(config)
+		elif isinstance(config, dict):
+			# User passed in a dictionary, it should have keys like BH_PUBLIC_KEY or similar
+			pass
+		elif config is None:
+			# Also acceptable, we're assuming we're loading from env
+			config = {}
+		else:
+			raise ValueError("Config must be a dict or a path to a json file")
 
+
+		config = self._prep_config(config)
 		self.config = config
+
 		self.thread_local = threading.local()
 
 		self.max_retries = 5
@@ -54,8 +66,36 @@ class BaseHandler():
 		Returns:
 			dict: The loaded configuration.
 		'''
-		with open(path, "r") as f:
+		if not os.path.exists(path):
+			raise ValueError(f"Config file not found at path: {path}")
+		with open(path, "r", encoding="utf-8") as f:
 			return json.load(f)
+
+	def _prep_config(self, config) -> dict:
+		'''
+		Triggered during init, each handler should define this and prep config variables
+		'''
+		raise NotImplementedError("This method should be implemented by the specific handler")
+
+	def _extend_config_from_env(self, config, keys_required, keys_optional=None) -> dict:
+		'''
+		Pulls in keys from the environment variables if set, overrides the config value if set
+		'''
+		if keys_optional is None:
+			keys_optional = []
+		for k in keys_required:
+			if k not in config:
+				env_value = os.getenv(k)
+				if env_value is not None:
+					config[k] = env_value
+				else:
+					raise ValueError(f"Missing required config key: {k}")
+		for k in keys_optional:
+			if k not in config:
+				env_value = os.getenv(k)
+				if env_value is not None:
+					config[k] = env_value
+		return config
 
 	def _strip_protocol_from_path(self,path):
 		raise NotImplementedError("This method should be implemented by the specific handler")

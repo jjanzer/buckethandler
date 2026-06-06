@@ -36,18 +36,100 @@ pip install -e .
 
 ## Configuration
 
-You must create a config.json file that contains your bucket API credentials. You can either pass in a custom file via `--config` or keep a `config.json` in your current working directory.
+You can either set environment variables, a config dictionary object, or a JSON file.
+
+### cli
 
 It is advised to first setup a test bucket until you get things working before using your production bucket. Be aware this library has the ability to write and remove files on your bucket if your credentials allow it.
+
+### Config Choices
+
+| Key              | Note                                                   | Backblaze      | AWS S3                     | Dropbox       |
+| ---------------- | -------------------------------------------------------| -------------- | -------------------------- | ------------- |
+| BH_PUBLIC_KEY    | The publicly visible key or app id                     | keyID          | Access key                 | App key       |
+| BH_SECRET_KEY    | A secret key, usually given once on creation           | applicationKey | Secret access key          | App secret    |
+| BH_BUCKET_NAME   | The human readable name given to the bucket            | Bucket         | Bucket                     | &#10060;      |
+| BH_BUCKET_ID     | The generated id given to the bucket                   | Bucket Id      | &#10060;                   | &#10060;      |
+| BH_REGION_ID     | The region for the bucket, eg: us-west-2               | Endpoint[^2]   | AWS Region                 | &#10060;      |
+| BH_ACCESS_TOKEN  | Created with the *--authorize* flag                    | &#10060;       | &#10060;                   | access token  |
+| BH_REFRESH_TOKEN | Created with the *--authorize* flag                    | &#10060;       | &#10060;                   | refresh token |
+| BH_B2_AS_S3      | Set true if you want to emulate a B2 bucket via S3[^3] |                | &#10060;                   | &#10060;      |
+
+* [^1]: Blank values can be ignored and don't need to be specified in the env/config.
+* [^2]: Backblaze does not need a region unless you are using the S3 interface for B2.
+* [^3]: Backblaze supports accessing B2 via an S3 interface, this is supported but not recommended, use the B2 handler instead.
+
+### Backblaze
+You will need to login to your backblaze admin panel or use the b2 cli.
+
+1. **BH_ACCOUNT_KEY** is from the *Application Key* you create, it's referenced in B2 as *keyID*.
+2. **BH_APPLICATION_KEY** is from the *Application Key* you create, this is the "secret" key that is the longer key, it is longer than the account BH_ACCOUNT_KEY and must be downloaded when you create they key or it's lost. It's shown to you once as *applicationKey*.
+3. **BH_BUCKET_NAME** is the actual name you gave the bucket, it appears as the title of the bucket name cards after you make one.
+4. **BH_BUCKET_ID** comes from the bucket you create. It will be an alphanumeric id, not the name you give it. You get this id in the admin interface that lists the buckets as *Bucket ID* or through the actual b2 cli.
+
+Note: the **BH_REGION_ID** is not used for B2 unless you are using it via S3 (not recommended).
+
+### S3
+
+You will need to login to your aws console or use the s3 cli. The S3 key comes from IAM access, so you can create an IAM policy for S3. Typically you'll create a custom policy for S3 and assign it to your user. The custom policy might look something like this (policies -> create policy -> specify permissions -> s3 -> switch from visual to JSON):
+
+~~~json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "Statement1",
+			"Effect": "Allow",
+			"Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:ListBucket",
+                "s3:DeleteObject"
+            ],
+			"Resource": [
+                "arn:aws:s3:::MY-BUCKET-NAME",
+                "arn:aws:s3:::MY-BUCKET-NAME/*"
+            ]
+		}
+	]
+}
+~~~
+
+It's normal to give this to a group first, then assign this group to your user(s). Once you have your user, your S3 bucket, and your policy you can get your access key. Go to the user in the IAM users page, and click "create access key", choose "Other", then give it a name and description. You'll be then presented at a page where you must copy you "Secret access key" or you will lose it. You will also need the "Access key". THe "Secret access key" will be longer than the "Access key". Then hit done.
+
+Note: While possible to access a B2 bucket via the B2 S3 interface, it's not recommended. If you want to use it, set **BH_B2_AS_S3** to true.
+
+### Dropbox
+
+Dropbox is a little trickier, it has a few methods for getting access, but currently Bucket Handler only supports one.
+
+You must create a Dropbox App via https://www.dropbox.com/developers/apps. Make it a Development status with permissions set to Scoped App it must have:
+
+1. account_info.read
+1. files.metadata.write
+1. files.metadata.read
+1. files.content.write
+1. files.content.read
+1. sharing.write
+1. sharing.read
+
+Get the *App key* and show the *App secret* and copy both of these. After you have these you then call
+
+```
+bh authorize --dropbox
+```
+
+With whatever suitable config you created (env/json/etc). It will launch a browser or give you a url to visit and instructions for getting both the refresh token and access token. You must then take these an add them to your configuration for the **BH_ACCESS_TOKEN** and **BH_REFRESH_TOKEN**.
+
 
 ### Backblaze B2
 b2 sample config
 ```
 {
-	"account_key": "YourAccountKey",
-	"application_key": "YourBucketApplicationKey",
-	"bucket_name": "YourBucketName",
-	"bucket_id": "YourBucketId"
+	"BH_PUBLIC_KEY": "...",
+	"BH_SECRET_KEY": "...",
+	"BH_BUCKET_NAME": "...",
+	"BH_BUCKET_ID": "...",
 }
 ```
 
@@ -55,21 +137,23 @@ b2 sample config
 s3 sample config
 ```
 {
-	"access_key": "YourAccessKey",
-	"secret_key": "YourSecretKey",
-	"bucket_name": "YourBucketName",
-	"bucket_id": "YourBucketId",
-	"region": "us-east-001"
+	"BH_PUBLIC_KEY": "...",
+	"BH_SECRET_KEY": "...",
+	"BH_BUCKET_NAME": "...",
+	"BH_BUCKET_ID": "...",
+	"BH_REGION_ID": "...",
 }
 ```
 
 ### Dropbox
 db sample config
 ```
-	"dropbox_app_key": "YourAppKey",
-	"dropbox_secret": "YourSecretKey",
-	"dropbox_refresh_token": "YourShortRefreshToken",
-	"dropbox_access_token": "YourVeryLongAccessToken"
+{
+	"BH_PUBLIC_KEY": "...",
+	"BH_SECRET_KEY": "...",
+	"BH_ACCESS_TOKEN": "...",
+	"BH_REFRESH_TOKEN": "...",
+}
 ```
 
 Note, you can get the `dropbox_access_token` and `dropbox_refresh_token` by triggering the `bh authorize --dropbox --config=YourConfig.json` argument to the CLI interface. Your `dropbox_app_key` and `dropbox_secret` come from creating an application in dropbox account settings.

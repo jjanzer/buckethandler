@@ -14,8 +14,11 @@ class BucketHandlerType(Enum):
 	DROPBOX = 3
 	UNKNOWN = 99
 
+class BucketHandlerHandlerTypeException(Exception):
+	pass
+
 class BucketHandler:
-	def __init__(self, config, handler_type:BucketHandlerType=BucketHandlerType.UNKNOWN, path:str = ''):
+	def __init__(self, config=None, handler_type:BucketHandlerType=BucketHandlerType.UNKNOWN, path:str = ''):
 		self.config = config
 		self.handler_type = handler_type
 		self.path = path
@@ -33,7 +36,7 @@ class BucketHandler:
 			from .handler.dropbox import DropboxHandler
 			self.handler = DropboxHandler(config)
 		else:
-			raise ValueError(f"Unknown handler type for path: {path}")
+			raise BucketHandlerHandlerTypeException(f"Unknown handler type for path: {path}")
 
 	def _guess_protocol(self,path):
 		if path is None:
