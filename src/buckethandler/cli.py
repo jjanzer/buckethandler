@@ -1,17 +1,3 @@
-'''
-Main entry point for the buckethandler, make sure you setup a config.json file alongside this with your keys.
-
-Basic usage:
-python bh.py fetch [key]
-python bh.py list
-python bh.py delete [key]
-python bh.py push [key]
-
-Where key will be a unique identifier such as the recipe id or similar.
-
-SEE ALSO: README.md
-'''
-
 from ast import arg
 import os
 import sys
@@ -33,10 +19,9 @@ from .buckethandler import BucketHandler, BucketHandlerType, BucketHandlerHandle
 
 def main():
 
-
 	parser_global = argparse.ArgumentParser(add_help=False)
 
-	parser_global.add_argument('-c', '--config', help='Path to the configuration file (default: config.json)', default='config.json')
+	parser_global.add_argument('-c', '--config', help='Path to the configuration file with your account info')
 	parser_global.add_argument('--norecurse', help='Do not recurse into subdirectories, defaults to recurse', action='store_true')
 	parser_global.add_argument('--nodirs', help='Exclude directories from the file list, defaults to include directories', action='store_true')
 	parser_global.add_argument('--nofiles', help='Exclude files from the file list, defaults to include files', action='store_true')
