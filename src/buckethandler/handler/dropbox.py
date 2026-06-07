@@ -397,6 +397,9 @@ class DropboxHandler(BaseHandler):
 							for link in links:
 								# see if we can find a public link
 								if link.link_permissions.resolved_visibility.is_public():
+									# if we did, we need to apply our settings to it, this is especially important if we're "refreshing" the expiration
+									# note: this does cause old urls to change their settings
+									self.dbx_user.sharing_modify_shared_link_settings(link.url, settings)
 									results.append(link.url)
 									break
 								else:
