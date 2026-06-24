@@ -6,11 +6,11 @@ The main use case is for extremely large project files that do not need to persi
 
 ## Supported Buckets and Features
 
-| System        | Search | Upload | Download | Move | Remove | Get URL |
-| ------------- | ------ | ------ | -------- | ---- | ------ | ------- |
-| Backblaze B2  | Y      | Y      | Y        | N    | Y      | Y       |
-| Amazon S3     | Y      | Y      | Y        | N    | N      | Y       |
-| Dropbox       | Y      | Y      | Y        | N    | N      | Y       |
+| System        | Search | Upload | Download | Move | Remove | DL URL | UL URL |
+| ------------- | ------ | ------ | -------- | ---- | ------ | ------ | ------ |
+| Backblaze B2  | Y      | Y      | Y        | N    | Y      | Y      | N      |
+| Amazon S3     | Y      | Y      | Y        | N    | N      | Y      | N      |
+| Dropbox       | Y      | Y      | Y        | N    | N      | Y      | N      |
 
 ## Installation
 
@@ -55,9 +55,9 @@ It is advised to first setup a test bucket until you get things working before u
 | BH_REFRESH_TOKEN | Created with the *--authorize* flag                    | &#10060;       | &#10060;                   | refresh token |
 | BH_B2_AS_S3      | Set true if you want to emulate a B2 bucket via S3[^3] |                | &#10060;                   | &#10060;      |
 
-* [^1]: Blank values can be ignored and don't need to be specified in the env/config.
-* [^2]: Backblaze does not need a region unless you are using the S3 interface for B2.
-* [^3]: Backblaze supports accessing B2 via an S3 interface, this is supported but not recommended, use the B2 handler instead.
+[^1]: Blank values can be ignored and don't need to be specified in the env/config.
+[^2]: Backblaze does not need a region unless you are using the S3 interface for B2.
+[^3]: Backblaze supports accessing B2 via an S3 interface, this is supported but not recommended, use the B2 handler instead.
 
 ### Backblaze
 You will need to login to your backblaze admin panel or use the b2 cli.

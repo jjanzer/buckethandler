@@ -25,6 +25,7 @@ class DropboxHandler(BaseHandler):
 	def __init__(self,config):
 		super().__init__(config)
 		self.authorized = False
+		self.large_file_upload_limit = 150 * 1024 * 1024 # 150MB limit
 
 	def _authorize(self):
 		'''
@@ -343,12 +344,78 @@ class DropboxHandler(BaseHandler):
 
 		return hasher.hexdigest()
 
+	# TODO: we need to clean up this API so it's more generic to support the DBX workflow
+	def _start_large_file_upload(self, path_src:str, path_dst:str):
+		raise NotImplementedError("Start large file upload method not implemented for this handler")
+	def _finish_large_file(self, path_dst:str, file_id, shas):
+		raise NotImplementedError("Finish large file upload method not implemented for this handler")
+
+	def _upload_chunk(self,chunk,chunks,path_src:str,url,upload_part_data):
+		buffer_len = 1024 * 1024 * 100 # 10mB
+		content = None
+		with open(path_src, 'rb', buffering=buffer_len) as file:
+			file.seek(chunk * self.max_bytes_per_chunk)
+			content = file.read(self.max_bytes_per_chunk)
+		size = len(content)
+		end_pos = upload_part_data['cursor'].offset + size
+		self.dbx.files_upload_session_append_v2(content,upload_part_data['cursor'],close=upload_part_data.get('close',False))
+
+	def _upload_large_file(self, path_src:str, path_dst:str, upload_key=None):
+		# Dropbox has a limit of 150MB for single file uploads, so we need to use the chunked upload API for larger files
+		self._auto_authenticate()
+		if not path_dst.startswith('/'):
+			path_dst = '/' + path_dst
+
+		file_size = os.path.getsize(path_src)
+		chunks = self._get_chunk_count_for_file(path_src)
+
+		# we need a type of concurrent to do multi threaded uploads
+		session_start = self.dbx_user.files_upload_session_start(b'',session_type=dropbox.files.UploadSessionType.concurrent)
+		cursor = dropbox.files.UploadSessionCursor(session_id=session_start.session_id, offset=0)
+
+		#results = []
+		#shas = []
+
+		with ThreadPoolExecutor(max_workers=self.max_upload_single_threads) as executor:
+			last_chunk = None
+
+			futures = []
+			for chunk in range(chunks-1):
+				offset = chunk * self.max_bytes_per_chunk
+				thread_cursor = dropbox.files.UploadSessionCursor(session_id=cursor.session_id, offset=offset)
+				upload_part_data = {'cursor': thread_cursor,'close': False}
+
+				future = executor.submit(self._upload_chunk, chunk, chunks, path_src=path_src, url=None, upload_part_data=upload_part_data)
+				futures.append(future)
+
+			# wait for all futures to complete
+			wait(futures)
+
+			# Our final chunk needs to wait until the other threads upload, then we can upload the last piece and close the session
+			# we can't simply send an empty chunk to close, but we could send a smaller chunk then the split
+			last_chunk = chunks-1
+			offset = last_chunk * self.max_bytes_per_chunk
+			thread_cursor = dropbox.files.UploadSessionCursor(session_id=cursor.session_id, offset=offset)
+			upload_part_data = {'cursor': thread_cursor, 'close': True}
+			self._upload_chunk(last_chunk, chunks, path_src=path_src, url=None, upload_part_data=upload_part_data)
+
+
+		cursor.offset = file_size
+		commit_info = dropbox.files.CommitInfo(path=path_dst, mode=dropbox.files.WriteMode.overwrite)
+		self.dbx.files_upload_session_finish(b'', cursor, commit_info)
+
+		return True
+
 	def _upload_file(self, path_src:str, path_dst:str, upload_key=None):
 		self._auto_authenticate()
 		# this is a single file upload, not to be confused with the "upload" method which can upload multiple files based on a prefix
 
 		if not path_dst.startswith('/'):
 			path_dst = '/' + path_dst
+
+		file_size = os.path.getsize(path_src)
+		if file_size > self.large_file_upload_limit:
+			return self._upload_large_file(path_src, path_dst, upload_key)
 
 		data:bytes
 		buffer_size = 10 * 1024 * 1024 # 10MB
