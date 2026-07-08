@@ -358,7 +358,7 @@ class DropboxHandler(BaseHandler):
 			content = file.read(self.max_bytes_per_chunk)
 		size = len(content)
 		end_pos = upload_part_data['cursor'].offset + size
-		self.dbx.files_upload_session_append_v2(content,upload_part_data['cursor'],close=upload_part_data.get('close',False))
+		self.dbx_user.files_upload_session_append_v2(content,upload_part_data['cursor'],close=upload_part_data.get('close',False))
 
 	def _upload_large_file(self, path_src:str, path_dst:str, upload_key=None):
 		# Dropbox has a limit of 150MB for single file uploads, so we need to use the chunked upload API for larger files
@@ -402,7 +402,12 @@ class DropboxHandler(BaseHandler):
 
 		cursor.offset = file_size
 		commit_info = dropbox.files.CommitInfo(path=path_dst, mode=dropbox.files.WriteMode.overwrite)
-		self.dbx.files_upload_session_finish(b'', cursor, commit_info)
+		finish_result = self.dbx_user.files_upload_session_finish(b'', cursor, commit_info)
+
+		#  verify that finish_result is valid and is a dropbox.files.FileMetadata instance
+		if finish_result is None or not isinstance(finish_result, dropbox.files.FileMetadata):
+			print(f"Error: Failed uploading large file {path_src} to {path_dst}")
+			return False
 
 		return True
 
